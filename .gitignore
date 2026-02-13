@@ -1,3 +1,5 @@
 node_modules/
 .browser-profile
 package-lock.json
+yachtworld_results.jsonl
+.DS_Store
