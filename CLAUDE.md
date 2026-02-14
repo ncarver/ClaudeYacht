@@ -1,78 +1,84 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
-YachtWorld sailboat listing scraper with a Next.js web frontend. The scraper uses Playwright with stealth plugins to bypass Cloudflare detection. Scrape results are ingested into a SQLite database (Prisma). The frontend lets you configure and trigger scrapes, browse results in a filterable/sortable table with a left filter rail, and annotate listings with notes, thumbs up/down, and favorites.
+YachtWorld sailboat listing scraper with a Next.js web frontend. Scrapes used sailboat listings via Playwright (with Cloudflare stealth bypass), ingests results into SQLite (Prisma), and provides a filterable/sortable table UI for browsing and annotating listings.
 
 ## Commands
 
-- **Install dependencies:** `npm install`
-- **Run dev server:** `npm run dev` (starts Next.js on http://localhost:3000)
-- **Build for production:** `npm run build`
-- **Start production server:** `npm start`
-- **Run scraper standalone:** `node scripts/scrape_yachtworld.js` (uses defaults: used sailboats, $10k-$100k, 37-42ft)
-- **Run scraper with args:** `node scripts/scrape_yachtworld.js --priceMin 20000 --priceMax 80000 --lengthMinFt 35 --lengthMaxFt 45 --condition used --excludeKetchYawl true --outputFile data/my_scrape.jsonl`
-- **Prisma generate:** `npx prisma generate` (regenerate client after schema changes)
-- **Prisma push:** `npx prisma db push` (sync schema to database)
-- **Prisma studio:** `npx prisma studio` (GUI for browsing the database)
-
-There is no linter or test suite configured.
-
-## Architecture
-
-### Data Flow
-
-```
-Scraper → JSONL file → Ingest Service → SQLite DB (Prisma)
-                                              ↑
-Frontend reads from DB, writes annotations ───┘
+```bash
+npm install                    # Install dependencies
+npm run dev                    # Dev server at http://localhost:3000
+npm run build                  # Production build (use to verify changes)
+npx prisma db push             # Sync schema changes to SQLite
+npx prisma studio              # GUI database browser
+node scripts/scrape_yachtworld.js  # Run scraper standalone (defaults: used, $10k-$100k, 37-42ft)
 ```
 
-### Backend
+No linter or test suite configured. Use `npm run build` to verify TypeScript correctness.
 
-- **scripts/scrape_yachtworld.js** — Main scraper (CommonJS). Uses `playwright-extra` with stealth plugin. Accepts CLI arguments for all search parameters. Outputs to JSONL files in `data/`.
-- **lib/ingest.ts** — Reads a JSONL file, parses `buildYear` from listing names, inserts into DB (skips duplicates by `linkUrl`). Auto-runs after each scrape completes.
-- **lib/scraper.ts** — Spawns the scraper as a child process, tracks status via `globalThis` singleton, auto-ingests on completion.
-- **lib/prisma.ts** — Prisma client singleton (persisted via `globalThis` for HMR).
-- **API routes:**
-  - `POST /api/scrape` — Start a scrape with parameters (409 if already running)
-  - `GET /api/scrape` — List available JSONL files
-  - `GET /api/scrape/status` — Poll current scrape status
-  - `POST /api/ingest` — Ingest a JSONL file into the database
-  - `GET /api/results` — Read all listings from the database
-  - `PATCH /api/listings/[id]` — Update annotations (notes, thumbs, favorite)
+## Data Flow
 
-### Frontend
+```
+Scraper (scripts/scrape_yachtworld.js)
+  → JSONL file (data/*.jsonl)
+  → Auto-ingest (lib/ingest.ts)
+  → SQLite DB (data/yacht.db via Prisma)
+  → GET /api/results → client-side filtering/sorting
+  → PATCH /api/listings/[id] → annotations persist back to DB
+```
 
-- **app/scrape/page.tsx** — Scrape config form (price, length, condition, ketch/yawl toggle, output filename)
-- **app/results/** — Results page with sidebar filter rail, search, sortable table, expandable rows
-- **components/results-filters.tsx** — Left rail: multi-select checkboxes (manufacturer, state), dual-thumb sliders (price, length, year), favorites toggle
-- **components/results-table.tsx** — TanStack React Table with expandable rows
-- **components/listing-detail.tsx** — Expanded row content: notes textarea, thumbs up/down, star/favorite
+## Key Directories
 
-### Database
+| Directory | Purpose |
+|---|---|
+| `app/` | Next.js App Router — pages and API routes |
+| `components/` | React components (feature + `ui/` primitives) |
+| `lib/` | Business logic: types, filters, ingest, scraper, utilities |
+| `scripts/` | Standalone CommonJS scraper (child process, not imported by Next.js) |
+| `prisma/` | Schema definition (`schema.prisma`) |
+| `data/` | Gitignored — JSONL files and `yacht.db` |
+| `.browser-profile/` | Gitignored — persistent Chromium profile for Cloudflare session |
 
-- SQLite at `data/yacht.db` via Prisma ORM
-- Schema in `prisma/schema.prisma`
-- `Listing` model: id, linkUrl (unique), buildYear, listingName, seller info, boat specs, priceUSD, dateLoaded, fileSource, notes, thumbs, favorite
-- `buildYear` is parsed during ingest from listing names like "2006 Hunter 38" → year: 2006, name: "Hunter 38"
+## API Routes
 
-## Key Details
+| Method | Route | Purpose |
+|---|---|---|
+| POST | `/api/scrape` | Start a scrape (409 if already running) |
+| GET | `/api/scrape` | List available JSONL files |
+| GET | `/api/scrape/status` | Poll current scrape status |
+| POST | `/api/ingest` | Ingest a JSONL file into the database |
+| GET | `/api/results` | Fetch all listings |
+| PATCH | `/api/listings/[id]` | Update annotations (notes, thumbs, favorite, properties) |
+| DELETE | `/api/listings` | Clear all listings |
 
-- Next.js 15 with App Router, React 19, TypeScript, Tailwind CSS v4, Radix UI
-- Prisma 6 with SQLite — database file at `data/yacht.db` (gitignored)
-- The scraper lives in `scripts/` as CommonJS `.js` — runs as a child process, never imported by Next.js
-- Scraper defaults to headed mode (visible browser + DevTools) for Cloudflare bypass
-- Random delays (3-5s) between page navigations to avoid rate limiting
-- `.browser-profile/` contains persistent Chromium profile data — do not delete unless resetting Cloudflare session
-- `data/` directory is gitignored — JSONL files and SQLite DB live here
-- Client-side filtering/sorting via TanStack React Table (dataset is small enough)
-- Annotations (notes, thumbs, favorites) persist in the database
+## Critical Files
 
-## Tech Stack
+- `lib/types.ts` — All shared TypeScript interfaces (`Listing`, `Filters`, `TriStateFilter`, `BoatProperties`, `ScrapeParams`)
+- `lib/filters.ts` — Search and filter logic (`matchesSearch`, `matchesFilters`, `matchesFiltersExcept`)
+- `lib/scraper.ts` — Spawns scraper child process, manages state via `globalThis`, auto-ingests on completion
+- `lib/prisma.ts` — PrismaClient singleton (persisted via `globalThis` for HMR)
+- `prisma/schema.prisma` — `Listing` model: run `npx prisma db push` after changes
+- `components/results-table.tsx` — TanStack React Table with expandable rows, indicator icons, pagination
+- `components/results-filters.tsx` — Filter rail: tri-state checkboxes, range sliders, toggles
+- `components/listing-detail.tsx` — Expanded row: seller info, thumbs, favorites, property checkboxes, notes
+- `app/results/results-content.tsx` — Orchestrates filters, search, table; handles optimistic updates
+- `scripts/scrape_yachtworld.js` — Playwright scraper (CommonJS); do not import from Next.js
 
-- **Runtime:** Next.js, React, Prisma (SQLite), Playwright, playwright-extra, puppeteer-extra-plugin-stealth
-- **UI:** Tailwind CSS, Radix UI (Select, Switch, Checkbox, Slider, Label, Slot), Lucide icons, TanStack React Table
-- **Utilities:** clsx, tailwind-merge, class-variance-authority
+## Important Conventions
+
+- **Schema changes**: Edit `prisma/schema.prisma`, then run `npx prisma db push` — no formal migrations
+- **`properties` column**: JSON string storing `BoatProperties` — parse with `parseProperties()` from `lib/types.ts:58`
+- **Scraper isolation**: Lives in `scripts/` as CommonJS; runs as child process via `lib/scraper.ts`
+- **Client-side filtering**: All filter logic runs in the browser (`lib/filters.ts`); dataset is small enough
+- **Optimistic updates**: `results-content.tsx` updates state immediately, reverts on PATCH failure
+- **PATCH whitelist**: Only `notes`, `thumbs`, `favorite`, `properties` accepted (`app/api/listings/[id]/route.ts:15`)
+- **Theming**: CSS variables in `app/globals.css` with `@theme inline`; toggled by `next-themes` via class attribute
+
+## Additional Documentation
+
+Check these files for detailed reference when working in related areas:
+
+- `.claude/docs/project_structure.md` — Full directory layout with file-by-file descriptions
+- `.claude/docs/tech_stack.md` — Framework versions, UI libraries, configuration files
+- `.claude/docs/architectural_patterns.md` — Design patterns used across the codebase (globalThis singletons, optimistic updates, tri-state filters, cross-filtered facets, push sidebar, JSON-in-SQLite, etc.)
