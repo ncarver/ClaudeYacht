@@ -1,0 +1,29 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../data/yacht.db"
+}
+
+model Listing {
+  id             Int      @id @default(autoincrement())
+  linkUrl        String   @unique
+  buildYear      Int?
+  listingName    String?
+  sellerName     String?
+  sellerLocation String?
+  imgUrl         String?
+  manufacturer   String?
+  boatClass      String?
+  lengthInMeters Float?
+  state          String?
+  priceUSD       Int?
+  dateLoaded     DateTime @default(now())
+  fileSource     String
+  notes          String   @default("")
+  thumbs         String? // "up", "down", or null
+  favorite       Boolean  @default(false)
+  properties     String   @default("{}")
+}

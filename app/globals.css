@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+/* Light mode (default) */
+:root {
+  --bg: #ffffff;
+  --fg: #0f172a;
+  --card: #f8fafc;
+  --card-fg: #0f172a;
+  --bdr: #e2e8f0;
+  --input-bg: #e2e8f0;
+  --primary: #3b82f6;
+  --primary-fg: #ffffff;
+  --muted-bg: #f1f5f9;
+  --muted-fg: #64748b;
+  --accent-bg: #dbeafe;
+  --accent-fg: #0f172a;
+  --destructive: #ef4444;
+  --ring-color: #3b82f6;
+}
+
+/* Dark mode */
+.dark {
+  --bg: #0a0f1a;
+  --fg: #e2e8f0;
+  --card: #111827;
+  --card-fg: #e2e8f0;
+  --bdr: #1e293b;
+  --input-bg: #1e293b;
+  --primary: #3b82f6;
+  --primary-fg: #ffffff;
+  --muted-bg: #1e293b;
+  --muted-fg: #94a3b8;
+  --accent-bg: #1e3a5f;
+  --accent-fg: #e2e8f0;
+  --destructive: #ef4444;
+  --ring-color: #3b82f6;
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-fg);
+  --color-border: var(--bdr);
+  --color-input: var(--input-bg);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-fg);
+  --color-muted: var(--muted-bg);
+  --color-muted-foreground: var(--muted-fg);
+  --color-accent: var(--accent-bg);
+  --color-accent-foreground: var(--accent-fg);
+  --color-destructive: var(--destructive);
+  --color-ring: var(--ring-color);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+* {
+  border-color: var(--bdr);
+}

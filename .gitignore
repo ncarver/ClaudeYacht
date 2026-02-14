@@ -3,3 +3,5 @@ node_modules/
 package-lock.json
 yachtworld_results.jsonl
 .DS_Store
+.next/
+data/

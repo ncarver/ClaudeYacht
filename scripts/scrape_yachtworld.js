@@ -6,9 +6,34 @@ const path = require('path');
 // Apply stealth plugin to avoid Cloudflare detection
 chromium.use(stealth);
 
-const OUTPUT_FILE = path.join(__dirname, 'yachtworld_results.jsonl');
-const USER_DATA_DIR = path.join(__dirname, '.browser-profile');
-const BASE_URL = 'https://www.yachtworld.com/boats-for-sale/condition-used/type-sail/?price=10000-100000&length=37-42&currency=USD';
+// Parse CLI arguments (--key value pairs), falling back to original defaults
+const cliArgs = {};
+for (let i = 2; i < process.argv.length; i += 2) {
+  const key = process.argv[i].replace(/^--/, '');
+  cliArgs[key] = process.argv[i + 1];
+}
+
+const priceMin = cliArgs.priceMin || '10000';
+const priceMax = cliArgs.priceMax || '100000';
+const lengthMinFt = cliArgs.lengthMinFt || '37';
+const lengthMaxFt = cliArgs.lengthMaxFt || '42';
+const condition = cliArgs.condition || 'used'; // 'used', 'new', or 'any'
+const excludeKetchYawl = cliArgs.excludeKetchYawl !== 'false'; // default true
+const excludeMultihull = cliArgs.excludeMultihull !== 'false'; // default true
+const headless = cliArgs.headless === 'true'; // default false (headed)
+
+const PROJECT_ROOT = path.join(__dirname, '..');
+
+const OUTPUT_FILE = cliArgs.outputFile
+  ? path.resolve(cliArgs.outputFile)
+  : path.join(PROJECT_ROOT, 'data', 'yachtworld_results.jsonl');
+
+const USER_DATA_DIR = path.join(PROJECT_ROOT, '.browser-profile');
+
+// Build URL dynamically from parameters
+const conditionSegment = condition === 'any' ? '' : `condition-${condition}/`;
+const BASE_URL = `https://www.yachtworld.com/boats-for-sale/${conditionSegment}type-sail/?price=${priceMin}-${priceMax}&length=${lengthMinFt}-${lengthMaxFt}&currency=USD`;
+
 const MIN_PAGE_DELAY_MS = 3000;
 const MAX_PAGE_DELAY_MS = 5000;
 
@@ -36,8 +61,8 @@ async function scrollToBottom(page) {
   });
 }
 
-async function extractCards(page) {
-  return page.evaluate(() => {
+async function extractCards(page, shouldExcludeKetchYawl, shouldExcludeMultihull) {
+  return page.evaluate(({ excludeKY, excludeMH }) => {
     const cards = document.querySelectorAll('a[data-ssr-meta]');
     const results = [];
 
@@ -56,15 +81,17 @@ async function extractCards(page) {
       const listingName =
         card.querySelector('[data-e2e="listingName"]')?.textContent?.trim() || null;
 
-      // Skip ketches and yawls (check listing name and data-ssr-meta)
       const ssrMetaRaw = card.getAttribute('data-ssr-meta') || '';
-      if (/ketch|yawl/i.test(listingName || '') || /ketch|yawl/i.test(ssrMetaRaw)) {
+
+      // Conditionally skip ketches and yawls
+      if (excludeKY && (/ketch|yawl/i.test(listingName || '') || /ketch|yawl/i.test(ssrMetaRaw))) {
         continue;
       }
 
-      // // Strip "US$" and commas, keep only the number
-      // const rawPrice = card.querySelector('[data-e2e="listingPrice"]')?.textContent?.trim() || null;
-      // const listingPrice = rawPrice ? Number(rawPrice.replace(/[^0-9.]/g, '')) || null : null;
+      // Conditionally skip multihulls (class contains "sail-multihull")
+      if (excludeMH && /sail-multihull/i.test(ssrMetaRaw)) {
+        continue;
+      }
 
       // Split seller content into sellerName and sellerLocation
       const rawSeller = card.querySelector('[data-e2e="listingSellerContent"]')?.textContent?.trim() || null;
@@ -99,7 +126,6 @@ async function extractCards(page) {
 
       results.push({
         listingName,
-        // listingPrice, //same as priceUSD
         sellerName,
         sellerLocation,
         imgUrl,
@@ -113,21 +139,33 @@ async function extractCards(page) {
     }
 
     return results;
-  });
+  }, { excludeKY: shouldExcludeKetchYawl, excludeMH: shouldExcludeMultihull });
 }
 
 (async () => {
+  console.log(`Scraping URL: ${BASE_URL}`);
+  console.log(`Output file: ${OUTPUT_FILE}`);
+  console.log(`Headless: ${headless}, Exclude ketch/yawl: ${excludeKetchYawl}, Exclude multihull: ${excludeMultihull}`);
+
+  // Ensure output directory exists
+  const outputDir = path.dirname(OUTPUT_FILE);
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
   // Clear output file
   fs.writeFileSync(OUTPUT_FILE, '');
 
   // Use persistent context to retain Cloudflare cookies across navigations
+  const browserArgs = ['--disable-blink-features=AutomationControlled'];
+  if (!headless) {
+    browserArgs.push('--auto-open-devtools-for-tabs');
+  }
+
   const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
-    headless: false,
+    headless: headless,
     viewport: { width: 1440, height: 900 },
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--auto-open-devtools-for-tabs',
-    ],
+    args: browserArgs,
   });
 
   const page = context.pages()[0] || await context.newPage();
@@ -175,7 +213,7 @@ async function extractCards(page) {
       visitedUrls.add(currentUrl);
 
       // Extract cards
-      const cards = await extractCards(page);
+      const cards = await extractCards(page, excludeKetchYawl, excludeMultihull);
       await log(page, `[Page ${pageNum}] Found ${cards.length} non-sponsored listings`);
 
       // Append each card to the JSONL file
