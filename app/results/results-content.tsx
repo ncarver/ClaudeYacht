@@ -6,8 +6,15 @@ import { SlidersHorizontal, X } from "lucide-react";
 import { FilterRail } from "@/components/results-filters";
 import { ResultsSearch } from "@/components/results-search";
 import { ResultsTable } from "@/components/results-table";
+import { ResearchPanel } from "@/components/research-panel";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import type { Listing, Filters } from "@/lib/types";
 import {
   matchesSearch,
@@ -27,6 +34,7 @@ export function ResultsPageContent() {
   const [filters, setFilters] = useState<Filters>({ ...defaultFilters });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [researchListing, setResearchListing] = useState<Listing | null>(null);
 
   // Fetch listings from DB
   const fetchListings = useCallback(async () => {
@@ -164,9 +172,29 @@ export function ResultsPageContent() {
             sorting={sorting}
             onSortingChange={setSorting}
             onUpdateListing={handleUpdateListing}
+            onResearch={(listing) => setResearchListing(listing)}
           />
         </div>
       </div>
+
+      {/* Research panel */}
+      <Sheet
+        open={!!researchListing}
+        onOpenChange={(open) => !open && setResearchListing(null)}
+      >
+        <SheetContent side="right" className="w-120 sm:w-135">
+          <SheetTitle className="sr-only">Research</SheetTitle>
+          <SheetDescription className="sr-only">
+            Research data for this listing
+          </SheetDescription>
+          {researchListing && (
+            <ResearchPanel
+              listing={researchListing}
+              onClose={() => setResearchListing(null)}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

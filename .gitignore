@@ -1,7 +1,9 @@
 node_modules/
 .browser-profile
+.browser-profile-research
 package-lock.json
 yachtworld_results.jsonl
 .DS_Store
 .next/
 data/
+.env.local

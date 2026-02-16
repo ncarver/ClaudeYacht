@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
     "playwright-extra",
     "puppeteer-extra-plugin-stealth",
     "@prisma/client",
+    "@anthropic-ai/sdk",
   ],
   images: {
     remotePatterns: [

@@ -26,6 +26,7 @@ import {
   ThumbsDown,
   StickyNote,
   CloudRain,
+  Microscope,
 } from "lucide-react";
 import type { Listing } from "@/lib/types";
 import { parseProperties, defaultBoatProperties, type BoatProperties } from "@/lib/types";
@@ -40,6 +41,7 @@ interface ResultsTableProps {
     id: number,
     data: Partial<Pick<Listing, "notes" | "thumbs" | "favorite" | "properties">>
   ) => void;
+  onResearch: (listing: Listing) => void;
 }
 
 const columns: ColumnDef<Listing>[] = [
@@ -69,13 +71,13 @@ const columns: ColumnDef<Listing>[] = [
     id: "indicators",
     header: "",
     cell: ({ row }) => {
-      const { favorite, thumbs, notes, properties } = row.original;
+      const { favorite, thumbs, notes, properties, hasResearch } = row.original;
       const hasNotes = !!notes;
       const props = parseProperties(properties);
       const hasBadProps = (Object.keys(defaultBoatProperties) as (keyof BoatProperties)[]).some(
         (k) => props[k]
       );
-      if (!favorite && !thumbs && !hasNotes && !hasBadProps) return null;
+      if (!favorite && !thumbs && !hasNotes && !hasBadProps && !hasResearch) return null;
       return (
         <div className="flex items-center gap-1">
           {favorite && (
@@ -92,6 +94,9 @@ const columns: ColumnDef<Listing>[] = [
           )}
           {hasBadProps && (
             <CloudRain className="h-3 w-3 text-muted-foreground" />
+          )}
+          {hasResearch && (
+            <Microscope className="h-3 w-3 text-purple-400" />
           )}
         </div>
       );
@@ -178,6 +183,7 @@ export function ResultsTable({
   sorting,
   onSortingChange,
   onUpdateListing,
+  onResearch,
 }: ResultsTableProps) {
   const [expanded, setExpanded] = useState<ExpandedState>({});
 
@@ -294,6 +300,7 @@ export function ResultsTable({
                         <ListingDetail
                           listing={row.original}
                           onUpdate={onUpdateListing}
+                          onResearch={onResearch}
                         />
                       </td>
                     </tr>

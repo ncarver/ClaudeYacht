@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ThumbsUp, ThumbsDown, Star, ExternalLink } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Star, ExternalLink, Microscope } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Listing, BoatProperties } from "@/lib/types";
@@ -18,9 +18,10 @@ interface ListingDetailProps {
     id: number,
     data: Partial<Pick<Listing, "notes" | "thumbs" | "favorite" | "properties">>
   ) => void;
+  onResearch: (listing: Listing) => void;
 }
 
-export function ListingDetail({ listing, onUpdate }: ListingDetailProps) {
+export function ListingDetail({ listing, onUpdate, onResearch }: ListingDetailProps) {
   const [notes, setNotes] = useState(listing.notes);
   const [localProps, setLocalProps] = useState(() =>
     parseProperties(listing.properties)
@@ -103,6 +104,17 @@ export function ListingDetail({ listing, onUpdate }: ListingDetailProps) {
             <Star
               className={cn("h-4 w-4", listing.favorite && "fill-current")}
             />
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onResearch(listing)}
+            className={cn(
+              listing.hasResearch && "text-purple-400 bg-purple-400/10"
+            )}
+          >
+            <Microscope className="h-4 w-4" />
           </Button>
 
           {listing.linkUrl && (
