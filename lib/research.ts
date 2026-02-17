@@ -2,7 +2,7 @@ import path from "path";
 import * as cheerio from "cheerio";
 import Anthropic from "@anthropic-ai/sdk";
 import prisma from "@/lib/prisma";
-import type { SailboatDataSpecs, ResearchStatus, SailboatCandidate } from "@/lib/types";
+import type { SailboatDataSpecs, ResearchStatus, SailboatCandidate, ReviewCandidate, ReviewResult } from "@/lib/types";
 import { defaultSailboatDataSpecs } from "@/lib/types";
 
 // ---- Async Mutex for Playwright serialization ----
@@ -40,6 +40,8 @@ interface ResearchJob {
   errorMessage: string | null;
   candidates: SailboatCandidate[] | null;
   resolveSelection: ((slug: string | null) => void) | null;
+  reviewCandidates: ReviewCandidate[] | null;
+  resolveReviewSelection: ((selectedUrls: string[]) => void) | null;
 }
 
 interface ResearchState {
@@ -84,6 +86,9 @@ export function getResearchStatus(listingId: number): ResearchStatus {
   if (job.status === "waiting_for_input" && job.candidates) {
     result.candidates = job.candidates;
   }
+  if (job.status === "waiting_for_input" && job.reviewCandidates) {
+    result.reviewCandidates = job.reviewCandidates;
+  }
   return result;
 }
 
@@ -93,6 +98,15 @@ export function selectSailboat(listingId: number, slug: string | null): boolean 
     return false;
   }
   job.resolveSelection(slug);
+  return true;
+}
+
+export function selectReviews(listingId: number, selectedUrls: string[]): boolean {
+  const job = getState().jobs.get(listingId);
+  if (!job || job.status !== "waiting_for_input" || !job.resolveReviewSelection) {
+    return false;
+  }
+  job.resolveReviewSelection(selectedUrls);
   return true;
 }
 
@@ -118,6 +132,8 @@ export async function startResearch(listingId: number): Promise<ResearchStatus> 
     errorMessage: null,
     candidates: null,
     resolveSelection: null,
+    reviewCandidates: null,
+    resolveReviewSelection: null,
   };
   state.jobs.set(listingId, job);
 
@@ -201,16 +217,16 @@ async function runPipeline(listingId: number, job: ResearchJob) {
         },
       });
 
-      // Step 2: Reviews search (disabled — focusing on sailboatdata)
-      // job.step = "reviews";
-      // let reviews: { title: string; source: string; url: string; excerpt: string }[] = [];
-      // try {
-      //   reviews = await searchReviews(manufacturer, boatClass, yearRange);
-      // } catch (err) {
-      //   console.error("Reviews search failed:", err);
-      // }
+      // Step 2: Reviews search (DDG + human-in-the-loop)
+      job.step = "reviews";
+      let reviews: ReviewResult[] = [];
+      try {
+        reviews = await resolveReviews(job, listingName, manufacturer, boatClass);
+      } catch (err) {
+        console.error("Reviews search failed:", err);
+      }
 
-      // Step 3: Forum search (disabled — focusing on sailboatdata)
+      // Step 3: Forum search (disabled)
       // job.step = "forums";
       // let forum: { name: string; url: string } | null = null;
       // try {
@@ -223,6 +239,7 @@ async function runPipeline(listingId: number, job: ResearchJob) {
       await prisma.modelResearch.update({
         where: { id: modelResearch.id },
         data: {
+          reviews: reviews.length > 0 ? JSON.stringify(reviews) : null,
           researchedAt: new Date(),
         },
       });
@@ -643,171 +660,160 @@ function computeYearRange(
   return { yearMin: null, yearMax: null };
 }
 
-// ---- Step 2: Reviews Search (Brave + Claude) ----
+// ---- DuckDuckGo Search ----
 
-interface BraveSearchResult {
+interface SearchResult {
   title: string;
   url: string;
-  description: string;
+  snippet: string;
 }
 
-async function braveSearch(
-  query: string,
-  apiKey: string
-): Promise<BraveSearchResult[]> {
-  const url = new URL("https://api.search.brave.com/res/v1/web/search");
-  url.searchParams.set("q", query);
-  url.searchParams.set("count", "10");
+async function ddgSearch(query: string): Promise<SearchResult[]> {
+  const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  console.log(`[research] DDG search: "${query}"`);
 
-  const res = await fetch(url.toString(), {
+  const res = await fetch(searchUrl, {
     headers: {
-      "X-Subscription-Token": apiKey,
-      Accept: "application/json",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
     },
     signal: AbortSignal.timeout(10000),
   });
 
   if (!res.ok) {
-    console.error(`Brave search failed: ${res.status} ${res.statusText}`);
+    console.error(`[research] DDG search failed: ${res.status}`);
     return [];
   }
 
-  const data = await res.json();
-  return (data.web?.results ?? []).map(
-    (r: { title?: string; url?: string; description?: string; extra_snippets?: string[] }) => ({
-      title: r.title ?? "",
-      url: r.url ?? "",
-      description: [r.description, ...(r.extra_snippets ?? [])]
-        .filter(Boolean)
-        .join(" "),
+  const html = await res.text();
+  const $ = cheerio.load(html);
+  const results: SearchResult[] = [];
+
+  // Debug: log page structure to diagnose selector issues
+  const linksDiv = $("#links");
+  const resultElements = linksDiv.find(".result");
+  console.log(`[research] DDG HTML length: ${html.length}, #links found: ${linksDiv.length}, .result elements: ${resultElements.length}`);
+
+  // Try primary selectors
+  resultElements.each((_, elem) => {
+    const title = $(elem).find(".result__a").text().trim();
+    const rawHref = $(elem).find(".result__a").attr("href") ?? "";
+    const snippet = $(elem).find(".result__snippet").text().trim();
+
+    // DDG wraps URLs in a redirect — extract the actual URL from the uddg parameter
+    let url = rawHref;
+    try {
+      const parsed = new URL(rawHref, "https://duckduckgo.com");
+      url = parsed.searchParams.get("uddg") ?? rawHref;
+    } catch {
+      // use rawHref as-is
+    }
+
+    if (title && url) {
+      results.push({ title, url, snippet });
+    }
+  });
+
+  // If primary selectors found nothing, log the first 500 chars and try alternate selectors
+  if (results.length === 0 && html.length > 0) {
+    console.log(`[research] DDG page title: "${$("title").text()}"`);
+    // Try alternate selectors for DDG lite/no-JS results
+    $("a.result-link, .results a.result__a, .web-result a").each((_, elem) => {
+      const title = $(elem).text().trim();
+      const rawHref = $(elem).attr("href") ?? "";
+      if (title && rawHref && rawHref.startsWith("http")) {
+        results.push({ title, url: rawHref, snippet: "" });
+      }
+    });
+    if (results.length > 0) {
+      console.log(`[research] DDG: found ${results.length} results with alternate selectors`);
+    }
+  }
+
+  console.log(`[research] DDG search: ${results.length} results`);
+  return results;
+}
+
+function extractDomain(url: string): string {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+// ---- Step 2: Reviews Search (DDG + Human-in-the-Loop) ----
+
+async function resolveReviews(
+  job: ResearchJob,
+  listingName: string | null,
+  manufacturer: string | null,
+  boatClass: string | null
+): Promise<ReviewResult[]> {
+  // Use listing name (e.g. "Bavaria 42 Cruiser") if available, fall back to manufacturer+class
+  const boatName = extractSearchKeyword(listingName)
+    ?? `${manufacturer ?? ""} ${boatClass ?? ""}`.trim();
+  if (!boatName) return [];
+
+  // Broad search — user manually selects relevant reviews
+  const query = `"${boatName}" sailboat review`;
+  const results = await ddgSearch(query);
+
+  if (results.length === 0) {
+    console.log("[research] No review search results found");
+    return [];
+  }
+
+  // Convert to ReviewCandidates
+  const candidates: ReviewCandidate[] = results.map((r) => ({
+    title: r.title,
+    url: r.url,
+    source: extractDomain(r.url),
+    snippet: r.snippet,
+  }));
+
+  // Pause pipeline — wait for user to select which reviews to keep
+  console.log(`[research] Pausing for review selection (${candidates.length} candidates)`);
+  job.status = "waiting_for_input";
+  job.step = "reviews";
+  job.reviewCandidates = candidates;
+
+  const selectedUrls = await new Promise<string[]>((resolve) => {
+    job.resolveReviewSelection = resolve;
+  });
+
+  // Resume
+  job.resolveReviewSelection = null;
+  job.reviewCandidates = null;
+  job.status = "running";
+  job.step = "reviews";
+
+  if (selectedUrls.length === 0) {
+    console.log("[research] User skipped all reviews");
+    return [];
+  }
+
+  // Build ReviewResult[] from the selected candidates
+  const selected: ReviewResult[] = selectedUrls
+    .map((url) => {
+      const candidate = candidates.find((c) => c.url === url);
+      if (!candidate) return null;
+      return {
+        title: candidate.title,
+        source: candidate.source,
+        url: candidate.url,
+        excerpt: candidate.snippet,
+      };
     })
-  );
+    .filter((r): r is ReviewResult => r !== null);
+
+  console.log(`[research] User selected ${selected.length} reviews`);
+  return selected;
 }
 
 function getAnthropicClient(): Anthropic {
   return new Anthropic();
-}
-
-async function searchReviews(
-  manufacturer: string | null,
-  boatClass: string | null,
-  yearRange: { yearMin: number | null; yearMax: number | null }
-): Promise<{ title: string; source: string; url: string; excerpt: string }[]> {
-  const apiKey = process.env.BRAVE_SEARCH_API_KEY;
-  if (!apiKey) {
-    console.warn("BRAVE_SEARCH_API_KEY not set, skipping review search");
-    return [];
-  }
-
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!anthropicKey) {
-    console.warn("ANTHROPIC_API_KEY not set, skipping review evaluation");
-    return [];
-  }
-
-  const boatName = `${manufacturer ?? ""} ${boatClass ?? ""}`.trim();
-  if (!boatName) return [];
-
-  const query = `"${boatName}" sailboat review site:practical-sailor.com OR site:sailmagazine.com OR site:cruisingworld.com OR site:yachtingmonthly.com OR site:bfriedman.net`;
-  const braveResults = await braveSearch(query, apiKey);
-
-  if (braveResults.length === 0) {
-    // Try a broader search
-    const broadQuery = `"${boatName}" sailboat review`;
-    const broadResults = await braveSearch(broadQuery, apiKey);
-    if (broadResults.length === 0) return [];
-    return evaluateReviews(boatName, yearRange, broadResults);
-  }
-
-  return evaluateReviews(boatName, yearRange, braveResults);
-}
-
-async function evaluateReviews(
-  boatName: string,
-  yearRange: { yearMin: number | null; yearMax: number | null },
-  results: BraveSearchResult[]
-): Promise<{ title: string; source: string; url: string; excerpt: string }[]> {
-  const anthropic = getAnthropicClient();
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250929",
-    max_tokens: 1024,
-    messages: [
-      {
-        role: "user",
-        content: `I'm researching the ${boatName}${yearRange.yearMin ? ` (${yearRange.yearMin}s era)` : ""}.
-
-Here are search results for professional reviews:
-${results.map((r, i) => `${i + 1}. "${r.title}" - ${r.url}\n   ${r.description}`).join("\n\n")}
-
-Return a JSON array of the most relevant professional reviews (up to 5). Each entry should have:
-- title: the article title
-- source: the publication name (e.g., "Practical Sailor")
-- url: the full URL
-- excerpt: a 1-2 sentence summary of what the review covers
-
-Return ONLY the JSON array, no other text. If none are relevant reviews, return [].`,
-      },
-    ],
-  });
-
-  try {
-    const text =
-      response.content[0].type === "text" ? response.content[0].text : "";
-    const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    return JSON.parse(cleaned);
-  } catch {
-    return [];
-  }
-}
-
-// ---- Step 3: Forum Search (Brave + Claude) ----
-
-async function searchForums(
-  manufacturer: string | null,
-  boatClass: string | null
-): Promise<{ name: string; url: string } | null> {
-  const apiKey = process.env.BRAVE_SEARCH_API_KEY;
-  if (!apiKey) return null;
-
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!anthropicKey) return null;
-
-  const boatName = `${manufacturer ?? ""} ${boatClass ?? ""}`.trim();
-  if (!boatName) return null;
-
-  const query = `"${boatName}" owners association OR owners group OR forum`;
-  const results = await braveSearch(query, apiKey);
-
-  if (results.length === 0) return null;
-
-  const anthropic = getAnthropicClient();
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250929",
-    max_tokens: 256,
-    messages: [
-      {
-        role: "user",
-        content: `Find the official owners association, dedicated forum, or owners group for the ${boatName} sailboat from these search results:
-${results.map((r, i) => `${i + 1}. "${r.title}" - ${r.url}\n   ${r.description}`).join("\n\n")}
-
-If you find a dedicated owners group, association, or forum, return JSON: {"name": "Forum Name", "url": "https://..."}
-If none exists, return null.
-Return ONLY the JSON or null, no other text.`,
-      },
-    ],
-  });
-
-  try {
-    const text =
-      response.content[0].type === "text" ? response.content[0].text : "";
-    const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-    return parsed;
-  } catch {
-    return null;
-  }
 }
 
 // ---- Step 4: YachtWorld Listing Summary (Playwright + Claude) ----

@@ -19,6 +19,7 @@ import type {
   ResearchStatus,
   SailboatDataSpecs,
   SailboatCandidate,
+  ReviewCandidate,
   ReviewResult,
 } from "@/lib/types";
 import {
@@ -148,6 +149,22 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
     }
   }
 
+  async function handleSelectReviews(urls: string[]) {
+    try {
+      await fetch(`/api/research/${listing.id}/select-reviews`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls }),
+      });
+      setStatus((prev) =>
+        prev ? { ...prev, status: "running", step: "reviews", reviewCandidates: undefined } : prev
+      );
+      startPolling();
+    } catch {
+      console.error("Failed to submit review selection");
+    }
+  }
+
   const isWaitingForInput = status?.status === "waiting_for_input";
   const isRunning =
     (status?.status === "running" ||
@@ -273,6 +290,14 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
         </Section>
       )}
 
+      {/* Review selection */}
+      {isWaitingForInput && status?.step === "reviews" && status?.reviewCandidates && status.reviewCandidates.length > 0 && (
+        <ReviewSelection
+          candidates={status.reviewCandidates}
+          onSubmit={handleSelectReviews}
+        />
+      )}
+
       {/* Listing Summary */}
       {isComplete && (
         <Section
@@ -326,13 +351,7 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
               ))}
             </div>
           ) : (
-            <EmptyMessage>
-              {!research?.capabilities?.hasAnthropicKey
-                ? "Anthropic API key not configured"
-                : !research?.capabilities?.hasBraveKey
-                  ? "Brave Search API key not configured"
-                  : "No reviews found"}
-            </EmptyMessage>
+            <EmptyMessage>No reviews found</EmptyMessage>
           )}
         </Section>
       )}
@@ -354,13 +373,7 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
               <ExternalLink className="h-3 w-3" />
             </a>
           ) : (
-            <EmptyMessage>
-              {!research?.capabilities?.hasAnthropicKey
-                ? "Anthropic API key not configured"
-                : !research?.capabilities?.hasBraveKey
-                  ? "Brave Search API key not configured"
-                  : "No dedicated forum found"}
-            </EmptyMessage>
+            <EmptyMessage>No dedicated forum found</EmptyMessage>
           )}
         </Section>
       )}
@@ -457,5 +470,92 @@ function ReviewCard({ review }: { review: ReviewResult }) {
         <p className="text-xs leading-relaxed">{review.excerpt}</p>
       )}
     </div>
+  );
+}
+
+function ReviewSelection({
+  candidates,
+  onSubmit,
+}: {
+  candidates: ReviewCandidate[];
+  onSubmit: (urls: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  function toggle(url: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) {
+        next.delete(url);
+      } else {
+        next.add(url);
+      }
+      return next;
+    });
+  }
+
+  return (
+    <Section
+      icon={<BookOpen className="h-4 w-4" />}
+      title="Select Reviews"
+    >
+      <p className="text-xs text-muted-foreground">
+        Select the relevant reviews to save:
+      </p>
+      <div className="space-y-1 mt-2">
+        {candidates.map((c) => (
+          <button
+            key={c.url}
+            onClick={() => toggle(c.url)}
+            className={cn(
+              "w-full text-left rounded-lg border p-2 text-xs hover:bg-muted transition-colors",
+              selected.has(c.url) && "border-primary bg-primary/5"
+            )}
+          >
+            <div className="flex items-start gap-2">
+              <div
+                className={cn(
+                  "mt-0.5 h-3.5 w-3.5 shrink-0 rounded border flex items-center justify-center",
+                  selected.has(c.url)
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-muted-foreground/40"
+                )}
+              >
+                {selected.has(c.url) && (
+                  <svg className="h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M2 6l3 3 5-5" />
+                  </svg>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="font-medium leading-tight line-clamp-2">{c.title}</span>
+                <div className="text-muted-foreground mt-0.5">{c.source}</div>
+                {c.snippet && (
+                  <p className="text-muted-foreground mt-1 line-clamp-2">{c.snippet}</p>
+                )}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2 mt-3">
+        <Button
+          variant="default"
+          size="sm"
+          disabled={selected.size === 0}
+          onClick={() => onSubmit(Array.from(selected))}
+          className="gap-1"
+        >
+          Save {selected.size > 0 ? `(${selected.size})` : ""}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onSubmit([])}
+        >
+          Skip
+        </Button>
+      </div>
+    </Section>
   );
 }

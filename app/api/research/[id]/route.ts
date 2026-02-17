@@ -71,7 +71,6 @@ export async function GET(
     model: modelResearch,
     capabilities: {
       hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-      hasBraveKey: !!process.env.BRAVE_SEARCH_API_KEY,
     },
   });
 }

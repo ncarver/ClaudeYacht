@@ -248,7 +248,6 @@ export interface ResearchResult {
   model: ModelResearchData | null;
   capabilities: {
     hasAnthropicKey: boolean;
-    hasBraveKey: boolean;
   };
 }
 
@@ -260,10 +259,18 @@ export interface SailboatCandidate {
   recommended: boolean;
 }
 
+export interface ReviewCandidate {
+  title: string;
+  url: string;
+  source: string;
+  snippet: string;
+}
+
 export interface ResearchStatus {
   listingId: number;
   status: "pending" | "running" | "waiting_for_input" | "complete" | "failed";
   step: string | null;
   errorMessage: string | null;
   candidates?: SailboatCandidate[];
+  reviewCandidates?: ReviewCandidate[];
 }
