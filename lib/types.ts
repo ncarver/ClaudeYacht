@@ -221,6 +221,29 @@ export function parseReviews(raw: string | null): ReviewResult[] {
   }
 }
 
+export interface ForumResult {
+  title: string;
+  source: string;
+  url: string;
+  excerpt: string;
+}
+
+export interface ForumCandidate {
+  title: string;
+  url: string;
+  source: string;
+  snippet: string;
+}
+
+export function parseForums(raw: string | null): ForumResult[] {
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
 export interface ListingResearchData {
   id: number;
   listingId: number;
@@ -238,8 +261,7 @@ export interface ModelResearchData {
   yearMax: number | null;
   sailboatData: string | null;
   reviews: string | null;
-  forumUrl: string | null;
-  forumName: string | null;
+  forums: string | null;
   researchedAt: string | null;
 }
 
@@ -273,4 +295,5 @@ export interface ResearchStatus {
   errorMessage: string | null;
   candidates?: SailboatCandidate[];
   reviewCandidates?: ReviewCandidate[];
+  forumCandidates?: ForumCandidate[];
 }

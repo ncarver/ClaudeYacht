@@ -47,8 +47,7 @@ model ModelResearch {
   yearMax      Int?
   sailboatData String? // JSON string: SailboatDataSpecs
   reviews      String? // JSON string: ReviewResult[]
-  forumUrl     String?
-  forumName    String?
+  forums       String? // JSON string: ForumResult[]
   researchedAt DateTime?
 
   @@unique([manufacturer, boatClass, yearMin, yearMax])

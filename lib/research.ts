@@ -2,7 +2,7 @@ import path from "path";
 import * as cheerio from "cheerio";
 import Anthropic from "@anthropic-ai/sdk";
 import prisma from "@/lib/prisma";
-import type { SailboatDataSpecs, ResearchStatus, SailboatCandidate, ReviewCandidate, ReviewResult } from "@/lib/types";
+import type { SailboatDataSpecs, ResearchStatus, SailboatCandidate, ReviewCandidate, ReviewResult, ForumCandidate, ForumResult } from "@/lib/types";
 import { defaultSailboatDataSpecs } from "@/lib/types";
 
 // ---- Async Mutex for Playwright serialization ----
@@ -42,6 +42,8 @@ interface ResearchJob {
   resolveSelection: ((slug: string | null) => void) | null;
   reviewCandidates: ReviewCandidate[] | null;
   resolveReviewSelection: ((selectedUrls: string[]) => void) | null;
+  forumCandidates: ForumCandidate[] | null;
+  resolveForumSelection: ((selectedUrls: string[]) => void) | null;
 }
 
 interface ResearchState {
@@ -89,6 +91,9 @@ export function getResearchStatus(listingId: number): ResearchStatus {
   if (job.status === "waiting_for_input" && job.reviewCandidates) {
     result.reviewCandidates = job.reviewCandidates;
   }
+  if (job.status === "waiting_for_input" && job.forumCandidates) {
+    result.forumCandidates = job.forumCandidates;
+  }
   return result;
 }
 
@@ -107,6 +112,15 @@ export function selectReviews(listingId: number, selectedUrls: string[]): boolea
     return false;
   }
   job.resolveReviewSelection(selectedUrls);
+  return true;
+}
+
+export function selectForums(listingId: number, selectedUrls: string[]): boolean {
+  const job = getState().jobs.get(listingId);
+  if (!job || job.status !== "waiting_for_input" || !job.resolveForumSelection) {
+    return false;
+  }
+  job.resolveForumSelection(selectedUrls);
   return true;
 }
 
@@ -134,6 +148,8 @@ export async function startResearch(listingId: number): Promise<ResearchStatus> 
     resolveSelection: null,
     reviewCandidates: null,
     resolveReviewSelection: null,
+    forumCandidates: null,
+    resolveForumSelection: null,
   };
   state.jobs.set(listingId, job);
 
@@ -226,20 +242,21 @@ async function runPipeline(listingId: number, job: ResearchJob) {
         console.error("Reviews search failed:", err);
       }
 
-      // Step 3: Forum search (disabled)
-      // job.step = "forums";
-      // let forum: { name: string; url: string } | null = null;
-      // try {
-      //   forum = await searchForums(manufacturer, boatClass);
-      // } catch (err) {
-      //   console.error("Forum search failed:", err);
-      // }
+      // Step 3: Forum search (DDG + human-in-the-loop)
+      job.step = "forums";
+      let forums: ForumResult[] = [];
+      try {
+        forums = await resolveForums(job, listingName, manufacturer, boatClass);
+      } catch (err) {
+        console.error("Forum search failed:", err);
+      }
 
       // Update ModelResearch
       await prisma.modelResearch.update({
         where: { id: modelResearch.id },
         data: {
           reviews: reviews.length > 0 ? JSON.stringify(reviews) : null,
+          forums: forums.length > 0 ? JSON.stringify(forums) : null,
           researchedAt: new Date(),
         },
       });
@@ -809,6 +826,69 @@ async function resolveReviews(
     .filter((r): r is ReviewResult => r !== null);
 
   console.log(`[research] User selected ${selected.length} reviews`);
+  return selected;
+}
+
+// ---- Step 3: Forum Search (DDG + Human-in-the-Loop) ----
+
+async function resolveForums(
+  job: ResearchJob,
+  listingName: string | null,
+  manufacturer: string | null,
+  boatClass: string | null
+): Promise<ForumResult[]> {
+  const boatName = extractSearchKeyword(listingName)
+    ?? `${manufacturer ?? ""} ${boatClass ?? ""}`.trim();
+  if (!boatName) return [];
+
+  const query = `"${boatName}" owners forum`;
+  const results = await ddgSearch(query);
+
+  if (results.length === 0) {
+    console.log("[research] No forum search results found");
+    return [];
+  }
+
+  const candidates: ForumCandidate[] = results.map((r) => ({
+    title: r.title,
+    url: r.url,
+    source: extractDomain(r.url),
+    snippet: r.snippet,
+  }));
+
+  console.log(`[research] Pausing for forum selection (${candidates.length} candidates)`);
+  job.status = "waiting_for_input";
+  job.step = "forums";
+  job.forumCandidates = candidates;
+
+  const selectedUrls = await new Promise<string[]>((resolve) => {
+    job.resolveForumSelection = resolve;
+  });
+
+  job.resolveForumSelection = null;
+  job.forumCandidates = null;
+  job.status = "running";
+  job.step = "forums";
+
+  if (selectedUrls.length === 0) {
+    console.log("[research] User skipped all forums");
+    return [];
+  }
+
+  const selected: ForumResult[] = selectedUrls
+    .map((url) => {
+      const candidate = candidates.find((c) => c.url === url);
+      if (!candidate) return null;
+      return {
+        title: candidate.title,
+        source: candidate.source,
+        url: candidate.url,
+        excerpt: candidate.snippet,
+      };
+    })
+    .filter((r): r is ForumResult => r !== null);
+
+  console.log(`[research] User selected ${selected.length} forums`);
   return selected;
 }
 

@@ -21,10 +21,13 @@ import type {
   SailboatCandidate,
   ReviewCandidate,
   ReviewResult,
+  ForumCandidate,
+  ForumResult,
 } from "@/lib/types";
 import {
   parseSailboatData,
   parseReviews,
+  parseForums,
   sailboatDataLabels,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -165,6 +168,22 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
     }
   }
 
+  async function handleSelectForums(urls: string[]) {
+    try {
+      await fetch(`/api/research/${listing.id}/select-forums`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls }),
+      });
+      setStatus((prev) =>
+        prev ? { ...prev, status: "running", step: "forums", forumCandidates: undefined } : prev
+      );
+      startPolling();
+    } catch {
+      console.error("Failed to submit forum selection");
+    }
+  }
+
   const isWaitingForInput = status?.status === "waiting_for_input";
   const isRunning =
     (status?.status === "running" ||
@@ -181,6 +200,9 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
     : null;
   const reviews = research?.model?.reviews
     ? parseReviews(research.model.reviews)
+    : [];
+  const forums = research?.model?.forums
+    ? parseForums(research.model.forums)
     : [];
 
   const boatName = [listing.buildYear, listing.manufacturer, listing.boatClass]
@@ -298,6 +320,14 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
         />
       )}
 
+      {/* Forum selection */}
+      {isWaitingForInput && status?.step === "forums" && status?.forumCandidates && status.forumCandidates.length > 0 && (
+        <ForumSelection
+          candidates={status.forumCandidates}
+          onSubmit={handleSelectForums}
+        />
+      )}
+
       {/* Listing Summary */}
       {isComplete && (
         <Section
@@ -356,24 +386,20 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
         </Section>
       )}
 
-      {/* Forum */}
+      {/* Forums */}
       {isComplete && (
         <Section
           icon={<MessageSquare className="h-4 w-4" />}
-          title="Owners Forum"
+          title="Owners Forums"
         >
-          {research?.model?.forumUrl ? (
-            <a
-              href={research.model.forumUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm text-primary hover:underline"
-            >
-              {research.model.forumName ?? "Visit Forum"}
-              <ExternalLink className="h-3 w-3" />
-            </a>
+          {forums.length > 0 ? (
+            <div className="space-y-3">
+              {forums.map((forum, i) => (
+                <ForumCard key={i} forum={forum} />
+              ))}
+            </div>
           ) : (
-            <EmptyMessage>No dedicated forum found</EmptyMessage>
+            <EmptyMessage>No forums found</EmptyMessage>
           )}
         </Section>
       )}
@@ -470,6 +496,115 @@ function ReviewCard({ review }: { review: ReviewResult }) {
         <p className="text-xs leading-relaxed">{review.excerpt}</p>
       )}
     </div>
+  );
+}
+
+function ForumCard({ forum }: { forum: ForumResult }) {
+  return (
+    <div className="rounded-lg border border-border p-3 space-y-1">
+      <div className="flex items-start justify-between gap-2">
+        <a
+          href={forum.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm font-medium text-primary hover:underline leading-tight"
+        >
+          {forum.title}
+        </a>
+        <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
+      </div>
+      <p className="text-xs text-muted-foreground">{forum.source}</p>
+      {forum.excerpt && (
+        <p className="text-xs leading-relaxed">{forum.excerpt}</p>
+      )}
+    </div>
+  );
+}
+
+function ForumSelection({
+  candidates,
+  onSubmit,
+}: {
+  candidates: ForumCandidate[];
+  onSubmit: (urls: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  function toggle(url: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) {
+        next.delete(url);
+      } else {
+        next.add(url);
+      }
+      return next;
+    });
+  }
+
+  return (
+    <Section
+      icon={<MessageSquare className="h-4 w-4" />}
+      title="Select Forums"
+    >
+      <p className="text-xs text-muted-foreground">
+        Select the relevant forums to save:
+      </p>
+      <div className="space-y-1 mt-2">
+        {candidates.map((c) => (
+          <button
+            key={c.url}
+            onClick={() => toggle(c.url)}
+            className={cn(
+              "w-full text-left rounded-lg border p-2 text-xs hover:bg-muted transition-colors",
+              selected.has(c.url) && "border-primary bg-primary/5"
+            )}
+          >
+            <div className="flex items-start gap-2">
+              <div
+                className={cn(
+                  "mt-0.5 h-3.5 w-3.5 shrink-0 rounded border flex items-center justify-center",
+                  selected.has(c.url)
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-muted-foreground/40"
+                )}
+              >
+                {selected.has(c.url) && (
+                  <svg className="h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M2 6l3 3 5-5" />
+                  </svg>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className="font-medium leading-tight line-clamp-2">{c.title}</span>
+                <div className="text-muted-foreground mt-0.5">{c.source}</div>
+                {c.snippet && (
+                  <p className="text-muted-foreground mt-1 line-clamp-2">{c.snippet}</p>
+                )}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2 mt-3">
+        <Button
+          variant="default"
+          size="sm"
+          disabled={selected.size === 0}
+          onClick={() => onSubmit(Array.from(selected))}
+          className="gap-1"
+        >
+          Save {selected.size > 0 ? `(${selected.size})` : ""}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onSubmit([])}
+        >
+          Skip
+        </Button>
+      </div>
+    </Section>
   );
 }
 
