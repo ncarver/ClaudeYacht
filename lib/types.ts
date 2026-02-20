@@ -57,12 +57,26 @@ export const boatPropertyLabels: Record<keyof BoatProperties, string> = {
   deckSteppedMast: "Deck-stepped mast",
 };
 
-export function parseProperties(raw: string): BoatProperties {
+function parseJsonColumn<T>(raw: string | null, defaults: T): T {
+  if (!raw) return { ...defaults };
   try {
-    return { ...defaultBoatProperties, ...JSON.parse(raw) };
+    return { ...defaults, ...JSON.parse(raw) } as T;
   } catch {
-    return { ...defaultBoatProperties };
+    return { ...defaults };
   }
+}
+
+function parseJsonArray<T>(raw: string | null): T[] {
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function parseProperties(raw: string): BoatProperties {
+  return parseJsonColumn(raw, defaultBoatProperties);
 }
 
 export interface TriStateFilter {
@@ -197,12 +211,7 @@ export const sailboatDataLabels: Record<keyof SailboatDataSpecs, string> = {
 };
 
 export function parseSailboatData(raw: string | null): SailboatDataSpecs {
-  if (!raw) return { ...defaultSailboatDataSpecs };
-  try {
-    return { ...defaultSailboatDataSpecs, ...JSON.parse(raw) };
-  } catch {
-    return { ...defaultSailboatDataSpecs };
-  }
+  return parseJsonColumn(raw, defaultSailboatDataSpecs);
 }
 
 export interface ReviewResult {
@@ -213,12 +222,7 @@ export interface ReviewResult {
 }
 
 export function parseReviews(raw: string | null): ReviewResult[] {
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  return parseJsonArray<ReviewResult>(raw);
 }
 
 export interface ForumResult {
@@ -236,12 +240,7 @@ export interface ForumCandidate {
 }
 
 export function parseForums(raw: string | null): ForumResult[] {
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  return parseJsonArray<ForumResult>(raw);
 }
 
 export interface ListingResearchData {

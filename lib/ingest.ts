@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "./prisma";
 import { getDataDir } from "./data-dir";
+import { parseJsonlLines } from "./read-jsonl";
 
 interface RawListing {
   listingName: string | null;
@@ -44,21 +45,14 @@ export async function ingestFile(fileName: string): Promise<IngestResult> {
   }
 
   const content = fs.readFileSync(filePath, "utf-8");
-  const lines = content.split("\n").filter((line) => line.trim().length > 0);
+  const { parsed: rawListings, errors: parseErrors } =
+    parseJsonlLines<RawListing>(content);
 
   let inserted = 0;
   let skipped = 0;
-  let errors = 0;
+  let errors = parseErrors;
 
-  for (const line of lines) {
-    let raw: RawListing;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      errors++;
-      continue;
-    }
-
+  for (const raw of rawListings) {
     if (!raw.linkUrl) {
       errors++;
       continue;
@@ -96,5 +90,5 @@ export async function ingestFile(fileName: string): Promise<IngestResult> {
     inserted++;
   }
 
-  return { total: lines.length, inserted, skipped, errors };
+  return { total: rawListings.length + parseErrors, inserted, skipped, errors };
 }

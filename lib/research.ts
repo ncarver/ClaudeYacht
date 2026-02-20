@@ -43,6 +43,7 @@ interface ResearchJob {
   resolveReviewSelection: ((selectedUrls: string[]) => void) | null;
   forumCandidates: ForumCandidate[] | null;
   resolveForumSelection: ((selectedUrls: string[]) => void) | null;
+  listeners: Set<(status: ResearchStatus) => void>;
 }
 
 interface ResearchState {
@@ -94,6 +95,31 @@ export function getResearchStatus(listingId: number): ResearchStatus {
     result.forumCandidates = job.forumCandidates;
   }
   return result;
+}
+
+function notifyListeners(job: ResearchJob) {
+  const status = getResearchStatus(job.listingId);
+  for (const listener of job.listeners) {
+    try {
+      listener(status);
+    } catch {
+      // ignore listener errors
+    }
+  }
+}
+
+export function subscribeToJob(
+  listingId: number,
+  callback: (status: ResearchStatus) => void
+): () => void {
+  const job = getState().jobs.get(listingId);
+  if (job) {
+    job.listeners.add(callback);
+  }
+  return () => {
+    const j = getState().jobs.get(listingId);
+    if (j) j.listeners.delete(callback);
+  };
 }
 
 export function selectSailboat(listingId: number, slug: string | null): boolean {
@@ -149,6 +175,7 @@ export async function startResearch(listingId: number): Promise<ResearchStatus> 
     resolveReviewSelection: null,
     forumCandidates: null,
     resolveForumSelection: null,
+    listeners: new Set(),
   };
   state.jobs.set(listingId, job);
 
@@ -178,6 +205,7 @@ async function runPipeline(listingId: number, job: ResearchJob) {
 
     // Step 1: YachtWorld listing description (per-listing, no API key needed)
     job.step = "yachtworld";
+    notifyListeners(job);
     let listingSummary: string | null = null;
     if (linkUrl) {
       try {
@@ -189,6 +217,7 @@ async function runPipeline(listingId: number, job: ResearchJob) {
 
     // Step 2: Sailboatdata.com (search-based with human-in-the-loop)
     job.step = "sailboatdata";
+    notifyListeners(job);
     let sailboatDataSpecs: SailboatDataSpecs | null = null;
     try {
       sailboatDataSpecs = await resolveSailboatData(job, {
@@ -245,6 +274,7 @@ async function runPipeline(listingId: number, job: ResearchJob) {
 
       // Step 2: Reviews search (DDG + human-in-the-loop)
       job.step = "reviews";
+      notifyListeners(job);
       let reviews: ReviewResult[] = [];
       try {
         reviews = await resolveReviews(job, listingName, manufacturer, boatClass);
@@ -254,6 +284,7 @@ async function runPipeline(listingId: number, job: ResearchJob) {
 
       // Step 3: Forum search (DDG + human-in-the-loop)
       job.step = "forums";
+      notifyListeners(job);
       let forums: ForumResult[] = [];
       try {
         forums = await resolveForums(job, listingName, manufacturer, boatClass);
@@ -284,11 +315,13 @@ async function runPipeline(listingId: number, job: ResearchJob) {
 
     job.status = "complete";
     job.step = null;
+    notifyListeners(job);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     job.status = "failed";
     job.errorMessage = message;
     job.step = null;
+    notifyListeners(job);
 
     await prisma.listingResearch
       .update({
@@ -539,6 +572,7 @@ async function resolveSailboatData(
   console.log(`[research] Pausing for user selection (${candidates.length} candidates)`);
   job.status = "waiting_for_input";
   job.candidates = candidates;
+  notifyListeners(job);
 
   const selectedSlug = await new Promise<string | null>((resolve) => {
     job.resolveSelection = resolve;
@@ -548,7 +582,8 @@ async function resolveSailboatData(
   job.resolveSelection = null;
   job.candidates = null;
   job.status = "running";
-  job.step = "sailboatdata";
+  job.step = "sailboatdata_finishing";
+  notifyListeners(job);
 
   // Save the choice
   const selectedCandidate = selectedSlug
@@ -762,7 +797,81 @@ function extractDomain(url: string): string {
   }
 }
 
-// ---- Step 2: Reviews Search (DDG + Human-in-the-Loop) ----
+// ---- Steps 2 & 3: DDG Search + Human-in-the-Loop Selection ----
+
+interface SearchSelectionConfig {
+  querySuffix: string;
+  step: "reviews" | "forums";
+  candidatesField: "reviewCandidates" | "forumCandidates";
+  resolverField: "resolveReviewSelection" | "resolveForumSelection";
+  label: string;
+}
+
+type SelectedResult = { title: string; source: string; url: string; excerpt: string };
+
+async function resolveSearchSelection(
+  job: ResearchJob,
+  listingName: string | null,
+  manufacturer: string | null,
+  boatClass: string | null,
+  config: SearchSelectionConfig
+): Promise<SelectedResult[]> {
+  const boatName = extractSearchKeyword(listingName)
+    ?? `${manufacturer ?? ""} ${boatClass ?? ""}`.trim();
+  if (!boatName) return [];
+
+  const query = `"${boatName}" ${config.querySuffix}`;
+  const results = await ddgSearch(query);
+
+  if (results.length === 0) {
+    console.log(`[research] No ${config.label} search results found`);
+    return [];
+  }
+
+  const candidates = results.map((r) => ({
+    title: r.title,
+    url: r.url,
+    source: extractDomain(r.url),
+    snippet: r.snippet,
+  }));
+
+  console.log(`[research] Pausing for ${config.label} selection (${candidates.length} candidates)`);
+  job.status = "waiting_for_input";
+  job.step = config.step;
+  job[config.candidatesField] = candidates;
+  notifyListeners(job);
+
+  const selectedUrls = await new Promise<string[]>((resolve) => {
+    job[config.resolverField] = resolve;
+  });
+
+  job[config.resolverField] = null;
+  job[config.candidatesField] = null;
+  job.status = "running";
+  job.step = `${config.step}_finishing`;
+  notifyListeners(job);
+
+  if (selectedUrls.length === 0) {
+    console.log(`[research] User skipped all ${config.label}`);
+    return [];
+  }
+
+  const selected = selectedUrls
+    .map((url) => {
+      const candidate = candidates.find((c) => c.url === url);
+      if (!candidate) return null;
+      return {
+        title: candidate.title,
+        source: candidate.source,
+        url: candidate.url,
+        excerpt: candidate.snippet,
+      };
+    })
+    .filter((r): r is SelectedResult => r !== null);
+
+  console.log(`[research] User selected ${selected.length} ${config.label}`);
+  return selected;
+}
 
 async function resolveReviews(
   job: ResearchJob,
@@ -770,68 +879,14 @@ async function resolveReviews(
   manufacturer: string | null,
   boatClass: string | null
 ): Promise<ReviewResult[]> {
-  // Use listing name (e.g. "Bavaria 42 Cruiser") if available, fall back to manufacturer+class
-  const boatName = extractSearchKeyword(listingName)
-    ?? `${manufacturer ?? ""} ${boatClass ?? ""}`.trim();
-  if (!boatName) return [];
-
-  // Broad search — user manually selects relevant reviews
-  const query = `"${boatName}" sailboat review`;
-  const results = await ddgSearch(query);
-
-  if (results.length === 0) {
-    console.log("[research] No review search results found");
-    return [];
-  }
-
-  // Convert to ReviewCandidates
-  const candidates: ReviewCandidate[] = results.map((r) => ({
-    title: r.title,
-    url: r.url,
-    source: extractDomain(r.url),
-    snippet: r.snippet,
-  }));
-
-  // Pause pipeline — wait for user to select which reviews to keep
-  console.log(`[research] Pausing for review selection (${candidates.length} candidates)`);
-  job.status = "waiting_for_input";
-  job.step = "reviews";
-  job.reviewCandidates = candidates;
-
-  const selectedUrls = await new Promise<string[]>((resolve) => {
-    job.resolveReviewSelection = resolve;
+  return resolveSearchSelection(job, listingName, manufacturer, boatClass, {
+    querySuffix: "sailboat review",
+    step: "reviews",
+    candidatesField: "reviewCandidates",
+    resolverField: "resolveReviewSelection",
+    label: "review",
   });
-
-  // Resume
-  job.resolveReviewSelection = null;
-  job.reviewCandidates = null;
-  job.status = "running";
-  job.step = "reviews";
-
-  if (selectedUrls.length === 0) {
-    console.log("[research] User skipped all reviews");
-    return [];
-  }
-
-  // Build ReviewResult[] from the selected candidates
-  const selected: ReviewResult[] = selectedUrls
-    .map((url) => {
-      const candidate = candidates.find((c) => c.url === url);
-      if (!candidate) return null;
-      return {
-        title: candidate.title,
-        source: candidate.source,
-        url: candidate.url,
-        excerpt: candidate.snippet,
-      };
-    })
-    .filter((r): r is ReviewResult => r !== null);
-
-  console.log(`[research] User selected ${selected.length} reviews`);
-  return selected;
 }
-
-// ---- Step 3: Forum Search (DDG + Human-in-the-Loop) ----
 
 async function resolveForums(
   job: ResearchJob,
@@ -839,59 +894,13 @@ async function resolveForums(
   manufacturer: string | null,
   boatClass: string | null
 ): Promise<ForumResult[]> {
-  const boatName = extractSearchKeyword(listingName)
-    ?? `${manufacturer ?? ""} ${boatClass ?? ""}`.trim();
-  if (!boatName) return [];
-
-  const query = `"${boatName}" owners forum`;
-  const results = await ddgSearch(query);
-
-  if (results.length === 0) {
-    console.log("[research] No forum search results found");
-    return [];
-  }
-
-  const candidates: ForumCandidate[] = results.map((r) => ({
-    title: r.title,
-    url: r.url,
-    source: extractDomain(r.url),
-    snippet: r.snippet,
-  }));
-
-  console.log(`[research] Pausing for forum selection (${candidates.length} candidates)`);
-  job.status = "waiting_for_input";
-  job.step = "forums";
-  job.forumCandidates = candidates;
-
-  const selectedUrls = await new Promise<string[]>((resolve) => {
-    job.resolveForumSelection = resolve;
+  return resolveSearchSelection(job, listingName, manufacturer, boatClass, {
+    querySuffix: "owners forum",
+    step: "forums",
+    candidatesField: "forumCandidates",
+    resolverField: "resolveForumSelection",
+    label: "forum",
   });
-
-  job.resolveForumSelection = null;
-  job.forumCandidates = null;
-  job.status = "running";
-  job.step = "forums";
-
-  if (selectedUrls.length === 0) {
-    console.log("[research] User skipped all forums");
-    return [];
-  }
-
-  const selected: ForumResult[] = selectedUrls
-    .map((url) => {
-      const candidate = candidates.find((c) => c.url === url);
-      if (!candidate) return null;
-      return {
-        title: candidate.title,
-        source: candidate.source,
-        url: candidate.url,
-        excerpt: candidate.snippet,
-      };
-    })
-    .filter((r): r is ForumResult => r !== null);
-
-  console.log(`[research] User selected ${selected.length} forums`);
-  return selected;
 }
 
 // ---- YachtWorld Listing Description (WebKit + Cheerio, no AI) ----

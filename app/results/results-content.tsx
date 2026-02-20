@@ -96,6 +96,26 @@ export function ResultsPageContent() {
   }
 
   if (!loading && listings.length === 0) {
+    if (error) {
+      return (
+        <div className="flex flex-col items-center justify-center gap-4 py-20">
+          <p className="text-destructive font-medium">
+            Something went wrong loading results.
+          </p>
+          <p className="text-sm text-muted-foreground max-w-md text-center">
+            This can happen when the app cache becomes stale. Go to the Scrape
+            page, click &ldquo;Clear All Listings&rdquo; to reset, then run a
+            new scrape.
+          </p>
+          <Link
+            href="/scrape"
+            className="rounded-lg bg-primary px-4 py-2 text-sm text-white hover:opacity-90 transition-opacity"
+          >
+            Go to Scrape page
+          </Link>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-20">
         <p className="text-muted-foreground">No scrape results found.</p>

@@ -22,18 +22,20 @@ export default function ScrapePage() {
   async function handleClearDatabase() {
     if (
       !window.confirm(
-        "Are you sure you want to delete all listings from the database? This cannot be undone."
+        "Are you sure you want to clear all data? This will delete all listings, scrape files, and app cache. This cannot be undone."
       )
     ) {
       return;
     }
     try {
       const res = await fetch("/api/listings", { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to clear database");
+      if (!res.ok) throw new Error("Failed to clear data");
       const data = await res.json();
-      alert(`Deleted ${data.deleted} listings.`);
+      alert(
+        `Reset complete: ${data.deleted} listings deleted, ${data.deletedFiles} scrape files removed.`
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to clear database");
+      setError(err instanceof Error ? err.message : "Failed to clear data");
     }
   }
 

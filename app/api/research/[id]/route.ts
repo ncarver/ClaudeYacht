@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { startResearch } from "@/lib/research";
+import { parseListingId } from "@/lib/api-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -8,11 +9,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-  const listingId = parseInt(id, 10);
-  if (isNaN(listingId)) {
-    return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
-  }
+  const result = await parseListingId(params);
+  if (result.error) return result.error;
+  const { listingId } = result;
 
   const listing = await prisma.listing.findUnique({
     where: { id: listingId },
@@ -40,11 +39,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-  const listingId = parseInt(id, 10);
-  if (isNaN(listingId)) {
-    return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
-  }
+  const result = await parseListingId(params);
+  if (result.error) return result.error;
+  const { listingId } = result;
 
   const listingResearch = await prisma.listingResearch.findUnique({
     where: { listingId },

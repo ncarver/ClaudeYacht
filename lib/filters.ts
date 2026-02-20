@@ -31,63 +31,6 @@ function matchesTriState(
   return true;
 }
 
-export function matchesFilters(listing: Listing, filters: Filters): boolean {
-  if (!matchesTriState(listing.manufacturer, filters.manufacturers)) {
-    return false;
-  }
-
-  if (!matchesTriState(listing.state, filters.states)) {
-    return false;
-  }
-
-  if (
-    filters.priceMin != null &&
-    (listing.priceUSD ?? 0) < filters.priceMin
-  ) {
-    return false;
-  }
-
-  if (
-    filters.priceMax != null &&
-    (listing.priceUSD ?? 0) > filters.priceMax
-  ) {
-    return false;
-  }
-
-  const lengthFt = listing.lengthInMeters
-    ? metersToFeet(listing.lengthInMeters)
-    : null;
-
-  if (filters.lengthMinFt != null && (lengthFt ?? 0) < filters.lengthMinFt) {
-    return false;
-  }
-
-  if (filters.lengthMaxFt != null && (lengthFt ?? 0) > filters.lengthMaxFt) {
-    return false;
-  }
-
-  if (filters.yearMin != null && (listing.buildYear ?? 0) < filters.yearMin) {
-    return false;
-  }
-
-  if (
-    filters.yearMax != null &&
-    (listing.buildYear ?? Infinity) > filters.yearMax
-  ) {
-    return false;
-  }
-
-  if (filters.favoritesOnly && !listing.favorite) {
-    return false;
-  }
-
-  if (filters.hideThumbsDown && listing.thumbs === "down") {
-    return false;
-  }
-
-  return true;
-}
-
 export type FilterDimension =
   | "manufacturers"
   | "states"
@@ -96,10 +39,10 @@ export type FilterDimension =
   | "year"
   | "favorites";
 
-export function matchesFiltersExcept(
+export function matchesFilters(
   listing: Listing,
   filters: Filters,
-  exclude: FilterDimension
+  exclude?: FilterDimension
 ): boolean {
   if (
     exclude !== "manufacturers" &&
@@ -119,40 +62,42 @@ export function matchesFiltersExcept(
     if (
       filters.priceMin != null &&
       (listing.priceUSD ?? 0) < filters.priceMin
-    )
+    ) {
       return false;
+    }
     if (
       filters.priceMax != null &&
       (listing.priceUSD ?? 0) > filters.priceMax
-    )
+    ) {
       return false;
+    }
   }
 
   if (exclude !== "length") {
     const lengthFt = listing.lengthInMeters
       ? metersToFeet(listing.lengthInMeters)
       : null;
-    if (filters.lengthMinFt != null && (lengthFt ?? 0) < filters.lengthMinFt)
+    if (filters.lengthMinFt != null && (lengthFt ?? 0) < filters.lengthMinFt) {
       return false;
-    if (filters.lengthMaxFt != null && (lengthFt ?? 0) > filters.lengthMaxFt)
+    }
+    if (filters.lengthMaxFt != null && (lengthFt ?? 0) > filters.lengthMaxFt) {
       return false;
+    }
   }
 
   if (exclude !== "year") {
-    if (filters.yearMin != null && (listing.buildYear ?? 0) < filters.yearMin)
+    if (filters.yearMin != null && (listing.buildYear ?? 0) < filters.yearMin) {
       return false;
+    }
     if (
       filters.yearMax != null &&
       (listing.buildYear ?? Infinity) > filters.yearMax
-    )
+    ) {
       return false;
+    }
   }
 
-  if (
-    exclude !== "favorites" &&
-    filters.favoritesOnly &&
-    !listing.favorite
-  ) {
+  if (exclude !== "favorites" && filters.favoritesOnly && !listing.favorite) {
     return false;
   }
 
@@ -161,6 +106,14 @@ export function matchesFiltersExcept(
   }
 
   return true;
+}
+
+export function matchesFiltersExcept(
+  listing: Listing,
+  filters: Filters,
+  exclude: FilterDimension
+): boolean {
+  return matchesFilters(listing, filters, exclude);
 }
 
 export function getUniqueValues(

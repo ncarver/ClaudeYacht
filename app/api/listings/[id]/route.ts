@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { parseListingId } from "@/lib/api-utils";
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-  const listingId = parseInt(id, 10);
-  if (isNaN(listingId)) {
-    return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
-  }
+  const result = await parseListingId(params);
+  if (result.error) return result.error;
+  const { listingId } = result;
 
   const body = await request.json();
   const allowedFields = ["notes", "thumbs", "favorite", "properties"];

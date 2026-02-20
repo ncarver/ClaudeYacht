@@ -19,9 +19,7 @@ import type {
   ResearchStatus,
   SailboatDataSpecs,
   SailboatCandidate,
-  ReviewCandidate,
   ReviewResult,
-  ForumCandidate,
   ForumResult,
 } from "@/lib/types";
 import {
@@ -39,17 +37,20 @@ interface ResearchPanelProps {
 }
 
 const stepLabels: Record<string, string> = {
-  sailboatdata: "Searching sailboatdata.com...",
-  reviews: "Searching for professional reviews...",
-  forums: "Looking for owners forums...",
   yachtworld: "Reading listing details...",
+  sailboatdata: "Searching sailboatdata.com...",
+  sailboatdata_finishing: "Finishing sailboat data...",
+  reviews: "Searching for professional reviews...",
+  reviews_finishing: "Finishing professional reviews...",
+  forums: "Looking for owners forums...",
+  forums_finishing: "Finishing owners forums...",
 };
 
 export function ResearchPanel({ listing, onClose, onResearchComplete }: ResearchPanelProps) {
   const [research, setResearch] = useState<ResearchResult | null>(null);
   const [status, setStatus] = useState<ResearchStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const fetchResearch = useCallback(async () => {
     try {
@@ -65,50 +66,68 @@ export function ResearchPanel({ listing, onClose, onResearchComplete }: Research
     return null;
   }, [listing.id]);
 
-  const stopPolling = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+  const disconnectSSE = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
     }
   }, []);
 
-  const startPolling = useCallback(() => {
-    stopPolling();
-    intervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/research/${listing.id}/status`);
-        if (res.ok) {
-          const s: ResearchStatus = await res.json();
-          setStatus(s);
-          if (s.status === "waiting_for_input") {
-            stopPolling(); // Stop polling while waiting for user selection
-          } else if (s.status === "complete" || s.status === "failed") {
-            stopPolling();
-            await fetchResearch();
-            if (s.status === "complete") onResearchComplete?.();
-          }
-        }
-      } catch {
-        // ignore polling errors
+  const connectSSE = useCallback(() => {
+    disconnectSSE();
+
+    const es = new EventSource(`/api/research/${listing.id}/status`);
+    eventSourceRef.current = es;
+
+    es.onmessage = async (event) => {
+      const s: ResearchStatus = JSON.parse(event.data);
+      setStatus(s);
+
+      if (s.status === "waiting_for_input") {
+        // Pause SSE while waiting for user selection
+        disconnectSSE();
+      } else if (s.status === "complete" || s.status === "failed") {
+        disconnectSSE();
+        await fetchResearch();
+        if (s.status === "complete") onResearchComplete?.();
       }
-    }, 2000);
-  }, [listing.id, stopPolling, fetchResearch]);
+    };
+
+    es.onerror = () => {
+      // EventSource auto-reconnects on error. If the connection
+      // closes permanently (readyState === CLOSED), show failure.
+      if (es.readyState === EventSource.CLOSED) {
+        disconnectSSE();
+        setStatus((prev) =>
+          prev && prev.status === "running"
+            ? {
+                ...prev,
+                status: "failed",
+                step: null,
+                errorMessage:
+                  "Lost connection to research server. Close this panel and try again.",
+              }
+            : prev
+        );
+      }
+    };
+  }, [listing.id, disconnectSSE, fetchResearch, onResearchComplete]);
 
   useEffect(() => {
     fetchResearch().then((data) => {
       setLoading(false);
       if (data?.listing?.status === "running") {
-        startPolling();
+        connectSSE();
       }
     });
-    return stopPolling;
-  }, [listing.id, fetchResearch, startPolling, stopPolling]);
+    return disconnectSSE;
+  }, [listing.id, fetchResearch, connectSSE, disconnectSSE]);
 
   async function handleStartResearch() {
     setStatus({
       listingId: listing.id,
       status: "running",
-      step: "sailboatdata",
+      step: "yachtworld",
       errorMessage: null,
     });
 
@@ -117,7 +136,7 @@ export function ResearchPanel({ listing, onClose, onResearchComplete }: Research
         method: "POST",
       });
       if (res.ok) {
-        startPolling();
+        connectSSE();
       } else {
         const data = await res.json();
         setStatus({
@@ -144,11 +163,11 @@ export function ResearchPanel({ listing, onClose, onResearchComplete }: Research
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slug }),
       });
-      // Clear waiting status and resume polling — pipeline continues server-side
+      // Clear waiting status and resume polling — pipeline finishes sailboat data then moves to reviews
       setStatus((prev) =>
-        prev ? { ...prev, status: "running", step: "sailboatdata", candidates: undefined } : prev
+        prev ? { ...prev, status: "running", step: "sailboatdata_finishing", candidates: undefined } : prev
       );
-      startPolling();
+      connectSSE();
     } catch {
       console.error("Failed to submit sailboat selection");
     }
@@ -162,9 +181,9 @@ export function ResearchPanel({ listing, onClose, onResearchComplete }: Research
         body: JSON.stringify({ urls }),
       });
       setStatus((prev) =>
-        prev ? { ...prev, status: "running", step: "reviews", reviewCandidates: undefined } : prev
+        prev ? { ...prev, status: "running", step: "reviews_finishing", reviewCandidates: undefined } : prev
       );
-      startPolling();
+      connectSSE();
     } catch {
       console.error("Failed to submit review selection");
     }
@@ -178,9 +197,9 @@ export function ResearchPanel({ listing, onClose, onResearchComplete }: Research
         body: JSON.stringify({ urls }),
       });
       setStatus((prev) =>
-        prev ? { ...prev, status: "running", step: "forums", forumCandidates: undefined } : prev
+        prev ? { ...prev, status: "running", step: "forums_finishing", forumCandidates: undefined } : prev
       );
-      startPolling();
+      connectSSE();
     } catch {
       console.error("Failed to submit forum selection");
     }
@@ -282,7 +301,7 @@ export function ResearchPanel({ listing, onClose, onResearchComplete }: Research
           <p className="text-xs text-muted-foreground">
             Select the matching model from sailboatdata.com:
           </p>
-          <div className="space-y-1 mt-2">
+          <div className="flex flex-col gap-1 mt-2">
             {status.candidates.map((c) => (
               <button
                 key={c.slug}
@@ -316,7 +335,9 @@ export function ResearchPanel({ listing, onClose, onResearchComplete }: Research
 
       {/* Review selection */}
       {isWaitingForInput && status?.step === "reviews" && status?.reviewCandidates && status.reviewCandidates.length > 0 && (
-        <ReviewSelection
+        <CandidateSelection
+          icon={<BookOpen className="h-4 w-4" />}
+          title="Select Reviews"
           candidates={status.reviewCandidates}
           onSubmit={handleSelectReviews}
         />
@@ -324,7 +345,9 @@ export function ResearchPanel({ listing, onClose, onResearchComplete }: Research
 
       {/* Forum selection */}
       {isWaitingForInput && status?.step === "forums" && status?.forumCandidates && status.forumCandidates.length > 0 && (
-        <ForumSelection
+        <CandidateSelection
+          icon={<MessageSquare className="h-4 w-4" />}
+          title="Select Forums"
           candidates={status.forumCandidates}
           onSubmit={handleSelectForums}
         />
@@ -532,11 +555,15 @@ function ForumCard({ forum }: { forum: ForumResult }) {
   );
 }
 
-function ForumSelection({
+function CandidateSelection({
+  icon,
+  title,
   candidates,
   onSubmit,
 }: {
-  candidates: ForumCandidate[];
+  icon: React.ReactNode;
+  title: string;
+  candidates: { title: string; url: string; source: string; snippet: string }[];
   onSubmit: (urls: string[]) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -554,101 +581,11 @@ function ForumSelection({
   }
 
   return (
-    <Section
-      icon={<MessageSquare className="h-4 w-4" />}
-      title="Select Forums"
-    >
+    <Section icon={icon} title={title}>
       <p className="text-xs text-muted-foreground">
-        Select the relevant forums to save:
+        Select the relevant {title.toLowerCase().replace("select ", "")} to save:
       </p>
-      <div className="space-y-1 mt-2">
-        {candidates.map((c) => (
-          <button
-            key={c.url}
-            onClick={() => toggle(c.url)}
-            className={cn(
-              "w-full text-left rounded-lg border p-2 text-xs hover:bg-muted transition-colors",
-              selected.has(c.url) && "border-primary bg-primary/5"
-            )}
-          >
-            <div className="flex items-start gap-2">
-              <div
-                className={cn(
-                  "mt-0.5 h-3.5 w-3.5 shrink-0 rounded border flex items-center justify-center",
-                  selected.has(c.url)
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-muted-foreground/40"
-                )}
-              >
-                {selected.has(c.url) && (
-                  <svg className="h-2.5 w-2.5" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M2 6l3 3 5-5" />
-                  </svg>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <span className="font-medium leading-tight line-clamp-2">{c.title}</span>
-                <div className="text-muted-foreground mt-0.5">{c.source}</div>
-                {c.snippet && (
-                  <p className="text-muted-foreground mt-1 line-clamp-2">{c.snippet}</p>
-                )}
-              </div>
-            </div>
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-2 mt-3">
-        <Button
-          variant="default"
-          size="sm"
-          disabled={selected.size === 0}
-          onClick={() => onSubmit(Array.from(selected))}
-          className="gap-1"
-        >
-          Save {selected.size > 0 ? `(${selected.size})` : ""}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onSubmit([])}
-        >
-          Skip
-        </Button>
-      </div>
-    </Section>
-  );
-}
-
-function ReviewSelection({
-  candidates,
-  onSubmit,
-}: {
-  candidates: ReviewCandidate[];
-  onSubmit: (urls: string[]) => void;
-}) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  function toggle(url: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(url)) {
-        next.delete(url);
-      } else {
-        next.add(url);
-      }
-      return next;
-    });
-  }
-
-  return (
-    <Section
-      icon={<BookOpen className="h-4 w-4" />}
-      title="Select Reviews"
-    >
-      <p className="text-xs text-muted-foreground">
-        Select the relevant reviews to save:
-      </p>
-      <div className="space-y-1 mt-2">
+      <div className="flex flex-col gap-1 mt-2">
         {candidates.map((c) => (
           <button
             key={c.url}

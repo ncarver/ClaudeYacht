@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { selectReviews } from "@/lib/research";
+import { parseListingId } from "@/lib/api-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -7,11 +8,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
-  const listingId = parseInt(id, 10);
-  if (isNaN(listingId)) {
-    return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
-  }
+  const result = await parseListingId(params);
+  if (result.error) return result.error;
+  const { listingId } = result;
 
   const body = await request.json();
   const urls: string[] = Array.isArray(body.urls) ? body.urls : [];
