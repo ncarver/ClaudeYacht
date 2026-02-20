@@ -2,7 +2,7 @@
 
 A YachtWorld sailboat listing scraper with a Next.js web frontend for browsing, filtering, and annotating results.
 
-Scrapes used sailboat listings from YachtWorld using Playwright with stealth plugins to bypass Cloudflare detection. Results are stored in a local SQLite database and presented in a filterable, sortable table with annotation tools for evaluating boats.
+Scrapes used sailboat listings from YachtWorld using Playwright with stealth plugins to bypass Cloudflare detection. Results are stored in a local SQLite database and presented in a filterable, sortable table with annotation tools for evaluating boats. Includes a one-click research feature that pulls sailboatdata.com specs, professional reviews, and owners forum posts for each boat model.
 
 ## Features
 
@@ -13,6 +13,7 @@ Scrapes used sailboat listings from YachtWorld using Playwright with stealth plu
 - **Search** -- Full-text search across listing name, seller, location, manufacturer, state, and notes
 - **Indicator icons** -- At-a-glance icons on each row for favorites, thumbs, notes, and flagged properties
 - **Light/dark mode** -- System-aware theme toggle with manual override
+- **Boat research** -- One-click research pulls sailboatdata.com specs, professional reviews, and owners forum posts for each boat model with human-in-the-loop selection of the best matches
 - **Cloudflare bypass** -- Persistent browser profile retains session cookies across scrapes
 
 <!-- Screenshots: add images here -->
@@ -88,11 +89,7 @@ node scripts/scrape_yachtworld.js \
   --outputFile data/custom_scrape.jsonl
 ```
 
-After a CLI scrape, ingest the results via the Scrape page or by running:
-
-```bash
-node scripts/ingest-initial.js
-```
+After a CLI scrape, ingest the results via the Scrape page in the web UI.
 
 ### Browsing results
 
@@ -104,6 +101,16 @@ Navigate to **Results** to view ingested listings. Use the filter icon to open t
 - **Search** by any text field
 
 Click a row to expand it and access annotations: thumbs up/down, favorite star, property checkboxes, and a notes field.
+
+### Researching a listing
+
+1. Expand a listing row and click **Research**
+2. The system searches sailboatdata.com for the boat model -- if multiple matches are found, select the correct one
+3. Professional reviews are found via DuckDuckGo -- select the most relevant results
+4. Owners forum posts are found the same way -- select the most relevant discussions
+5. View the consolidated research panel with specs, reviews, and forum links
+
+Research is cached per boat model (manufacturer + class + year range), so multiple listings of the same model share research data automatically.
 
 ### Database management
 
@@ -129,18 +136,32 @@ All filtering and sorting happens in the browser using pure functions in `lib/fi
 
 Notes, thumbs up/down, favorites, and property checkboxes are saved to the database via optimistic updates. The UI updates immediately and reverts if the server request fails.
 
+### Research pipeline
+
+Clicking "Research" on a listing triggers an orchestrated pipeline in `lib/research.ts`:
+
+1. **Sailboatdata.com specs** -- Playwright navigates to sailboatdata.com, searches for the boat model, and scrapes specifications (dimensions, displacement, sail area, etc.). If multiple models match, the user selects the correct one via the research panel.
+2. **Professional reviews** -- DuckDuckGo is searched for professional reviews of the boat model. The user selects the most relevant results from the candidates.
+3. **Owners forum posts** -- Another DuckDuckGo search finds owners forum discussions. The user again selects the best matches.
+
+Research progress is streamed to the browser via Server-Sent Events, so the UI updates in real-time as each step completes. Results are cached in a `ModelResearch` table keyed by manufacturer, class, and year range -- so if you research one "Hunter 38", all other Hunter 38 listings share the same data. A `SailboatDataMapping` table remembers which sailboatdata.com model corresponds to each boat name, eliminating repeat selections.
+
+An `AsyncMutex` ensures only one Playwright browser session runs at a time, preventing resource exhaustion when multiple research requests arrive concurrently.
+
 ## Project Structure
 
 ```
 app/                    # Next.js App Router (pages + API routes)
-  api/                  # REST endpoints for scrape, ingest, listings
+  api/                  # REST endpoints for scrape, ingest, listings, research
   results/              # Results page with filters, search, table
   scrape/               # Scrape configuration page
 components/             # React components
   ui/                   # Radix-based primitives (button, slider, switch, etc.)
-lib/                    # Business logic (types, filters, ingest, scraper, utils)
+  research-panel.tsx    # Research UI with SSE status and human-in-the-loop selection
+lib/                    # Business logic (types, filters, ingest, scraper, research, utils)
+  research.ts           # Research orchestration (Playwright, DuckDuckGo, SSE)
 scripts/                # Standalone scraper (CommonJS, runs as child process)
-prisma/                 # Database schema
+prisma/                 # Database schema (Listing, ListingResearch, ModelResearch, SailboatDataMapping)
 data/                   # Gitignored: JSONL files + SQLite database
 ```
 
@@ -152,6 +173,7 @@ data/                   # Gitignored: JSONL files + SQLite database
 - [TanStack Table](https://tanstack.com/table)
 - [Tailwind CSS v4](https://tailwindcss.com/) + [Radix UI](https://www.radix-ui.com/)
 - [Lucide Icons](https://lucide.dev/)
+- [Cheerio](https://cheerio.js.org/) (HTML parsing for research scraping)
 
 ## License
 
