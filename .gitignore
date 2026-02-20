@@ -7,3 +7,4 @@ yachtworld_results.jsonl
 .next/
 data/
 .env.local
+tsconfig.tsbuildinfo
