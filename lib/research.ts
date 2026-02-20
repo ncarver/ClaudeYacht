@@ -1,6 +1,5 @@
-import path from "path";
 import * as cheerio from "cheerio";
-import Anthropic from "@anthropic-ai/sdk";
+
 import prisma from "@/lib/prisma";
 import type { SailboatDataSpecs, ResearchStatus, SailboatCandidate, ReviewCandidate, ReviewResult, ForumCandidate, ForumResult } from "@/lib/types";
 import { defaultSailboatDataSpecs } from "@/lib/types";
@@ -177,7 +176,18 @@ async function runPipeline(listingId: number, job: ResearchJob) {
     });
     const { manufacturer, boatClass, buildYear, linkUrl, listingName, lengthInMeters } = listing;
 
-    // Step 1: Sailboatdata.com (search-based with human-in-the-loop)
+    // Step 1: YachtWorld listing description (per-listing, no API key needed)
+    job.step = "yachtworld";
+    let listingSummary: string | null = null;
+    if (linkUrl) {
+      try {
+        listingSummary = await fetchListingDescription(linkUrl);
+      } catch (err) {
+        console.error("YachtWorld description fetch failed:", err);
+      }
+    }
+
+    // Step 2: Sailboatdata.com (search-based with human-in-the-loop)
     job.step = "sailboatdata";
     let sailboatDataSpecs: SailboatDataSpecs | null = null;
     try {
@@ -262,22 +272,12 @@ async function runPipeline(listingId: number, job: ResearchJob) {
       });
     }
 
-    // Step 4: YachtWorld listing summary (disabled — focusing on sailboatdata)
-    // job.step = "yachtworld";
-    // let listingSummary: string | null = null;
-    // if (linkUrl) {
-    //   try {
-    //     listingSummary = await fetchAndSummarizeListing(linkUrl);
-    //   } catch (err) {
-    //     console.error("YachtWorld summary failed:", err);
-    //   }
-    // }
-
     // Finalize
     await prisma.listingResearch.update({
       where: { listingId },
       data: {
         status: "complete",
+        listingSummary,
         researchedAt: new Date(),
       },
     });
@@ -359,6 +359,8 @@ async function fetchPageHtml(url: string): Promise<string | null> {
     const html: string = await page.content();
     await browser.close();
     browser = null;
+    // Brief delay to let WebKit fully release resources before next launch
+    await new Promise((r) => setTimeout(r, 2000));
     return html;
   } catch (err) {
     console.error(`[research] WebKit fetch failed for ${url}:`, err);
@@ -892,150 +894,49 @@ async function resolveForums(
   return selected;
 }
 
-function getAnthropicClient(): Anthropic {
-  return new Anthropic();
-}
+// ---- YachtWorld Listing Description (WebKit + Cheerio, no AI) ----
 
-// ---- Step 4: YachtWorld Listing Summary (Playwright + Claude) ----
-
-async function fetchAndSummarizeListing(
+async function fetchListingDescription(
   linkUrl: string
 ): Promise<string | null> {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!anthropicKey) {
-    console.warn("[research] ANTHROPIC_API_KEY not set, skipping listing summary");
+  const html = await fetchPageHtml(linkUrl);
+  if (!html) {
+    console.error("[research] YachtWorld listing fetch failed (no HTML)");
     return null;
   }
 
-  const mutex = getMutex();
-  await mutex.acquire();
+  const $ = cheerio.load(html);
 
-  let context;
-  try {
-    const { chromium } = require("playwright-extra");
-    const stealth = require("puppeteer-extra-plugin-stealth")();
-    chromium.use(stealth);
+  // YachtWorld uses an accordion: <details><summary>Description</summary><div class="data-html">...</div></details>
+  let content: string | null = null;
 
-    // Use the main browser profile (has Cloudflare cookies from scraping).
-    // The mutex prevents concurrent Playwright usage within the research agent.
-    // If the scraper is also running, Playwright will fail to lock the profile
-    // and we'll catch that error gracefully.
-    const userDataDir = path.join(process.cwd(), ".browser-profile");
-
-    console.log(`[research] Launching Playwright for ${linkUrl}`);
-    context = await chromium.launchPersistentContext(userDataDir, {
-      headless: false,
-      viewport: { width: 1440, height: 900 },
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
-
-    const page = context.pages()[0] || (await context.newPage());
-    console.log("[research] Navigating to listing page...");
-    await page.goto(linkUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(3000);
-
-    // Check if we hit a Cloudflare challenge
-    const pageTitle: string = await page.title();
-    const pageUrl: string = page.url();
-    console.log(`[research] Page loaded — title: "${pageTitle}", url: ${pageUrl}`);
-
-    if (
-      pageTitle.toLowerCase().includes("just a moment") ||
-      pageTitle.toLowerCase().includes("attention required") ||
-      pageTitle.toLowerCase().includes("challenge")
-    ) {
-      console.warn("[research] Cloudflare challenge detected, waiting 10s for resolution...");
-      await page.waitForTimeout(10000);
-      const newTitle: string = await page.title();
-      console.log(`[research] After wait — title: "${newTitle}"`);
-      if (
-        newTitle.toLowerCase().includes("just a moment") ||
-        newTitle.toLowerCase().includes("challenge")
-      ) {
-        console.error("[research] Cloudflare challenge not resolved. Cannot fetch listing.");
-        await context.close();
-        context = null;
-        return null;
+  $("summary").each((_, el) => {
+    if (content) return;
+    const text = $(el).text().trim().toLowerCase();
+    if (text === "description") {
+      const descHtml = $(el).siblings(".data-html").first();
+      const descText = descHtml.text().trim();
+      if (descText && descText.length > 20) {
+        content = descText;
       }
     }
-
-    // Scroll down to load lazy content
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(1000);
-
-    const { content, matchedSelector }: { content: string; matchedSelector: string } =
-      await page.evaluate(() => {
-        // Try specific YachtWorld selectors first
-        const selectors = [
-          '[data-e2e="listing-description"]',
-          ".listing-description",
-          ".boat-description",
-          '[class*="description"]',
-          '[class*="Description"]',
-        ];
-        for (const sel of selectors) {
-          const el = document.querySelector(sel);
-          if (el?.textContent && el.textContent.trim().length > 100) {
-            return { content: el.textContent.trim(), matchedSelector: sel };
-          }
-        }
-        // Fallback: grab the main content area text
-        const main = document.querySelector("main") ?? document.body;
-        return {
-          content: main.innerText.substring(0, 8000),
-          matchedSelector: "fallback (main/body)",
-        };
-      });
-
-    console.log(
-      `[research] Content extracted — selector: "${matchedSelector}", length: ${content.length} chars`
-    );
-
-    await context.close();
-    context = null;
-
-    if (!content || content.length < 50) {
-      console.warn(`[research] Content too short (${content.length} chars), skipping summary`);
-      return null;
-    }
-
-    console.log("[research] Sending to Claude for summarization...");
-    const summary = await summarizeWithClaude(content, linkUrl);
-    console.log(`[research] Summary generated (${summary.length} chars)`);
-    return summary;
-  } catch (err) {
-    console.error("[research] Failed to fetch/summarize listing:", err);
-    if (context) {
-      await context.close().catch(() => {});
-    }
-    return null;
-  } finally {
-    mutex.release();
-  }
-}
-
-async function summarizeWithClaude(
-  content: string,
-  url: string
-): Promise<string> {
-  const anthropic = getAnthropicClient();
-  const truncated = content.substring(0, 8000);
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250929",
-    max_tokens: 512,
-    messages: [
-      {
-        role: "user",
-        content: `Summarize this YachtWorld sailboat listing in 3-5 sentences. Focus on: condition, key equipment/upgrades, notable features, and anything a buyer should know. Be factual and concise.
-
-Listing URL: ${url}
-
-Listing content:
-${truncated}`,
-      },
-    ],
   });
 
-  return response.content[0].type === "text" ? response.content[0].text : "";
+  if (!content) {
+    console.warn("[research] Could not find listing description on page");
+    return null;
+  }
+
+  const description = content as string;
+  console.log(
+    `[research] Description extracted, length: ${description.length} chars`
+  );
+
+  // Truncate to 350 characters
+  const snippet = description.length > 350
+    ? description.substring(0, 350).trimEnd() + "…"
+    : description;
+
+  console.log(`[research] Description snippet: ${snippet.length} chars`);
+  return snippet;
 }

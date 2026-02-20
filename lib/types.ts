@@ -268,9 +268,7 @@ export interface ModelResearchData {
 export interface ResearchResult {
   listing: ListingResearchData | null;
   model: ModelResearchData | null;
-  capabilities: {
-    hasAnthropicKey: boolean;
-  };
+  capabilities: Record<string, never>;
 }
 
 export interface SailboatCandidate {

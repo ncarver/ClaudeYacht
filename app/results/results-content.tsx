@@ -191,6 +191,7 @@ export function ResultsPageContent() {
             <ResearchPanel
               listing={researchListing}
               onClose={() => setResearchListing(null)}
+              onResearchComplete={fetchListings}
             />
           )}
         </SheetContent>

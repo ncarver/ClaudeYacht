@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 interface ResearchPanelProps {
   listing: Listing;
   onClose: () => void;
+  onResearchComplete?: () => void;
 }
 
 const stepLabels: Record<string, string> = {
@@ -44,7 +45,7 @@ const stepLabels: Record<string, string> = {
   yachtworld: "Reading listing details...",
 };
 
-export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
+export function ResearchPanel({ listing, onClose, onResearchComplete }: ResearchPanelProps) {
   const [research, setResearch] = useState<ResearchResult | null>(null);
   const [status, setStatus] = useState<ResearchStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,6 +85,7 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
           } else if (s.status === "complete" || s.status === "failed") {
             stopPolling();
             await fetchResearch();
+            if (s.status === "complete") onResearchComplete?.();
           }
         }
       } catch {
@@ -328,22 +330,31 @@ export function ResearchPanel({ listing, onClose }: ResearchPanelProps) {
         />
       )}
 
-      {/* Listing Summary */}
+      {/* Listing Description */}
       {isComplete && (
         <Section
           icon={<FileText className="h-4 w-4" />}
-          title="Listing Summary"
+          title="Listing Description"
         >
           {research?.listing?.listingSummary ? (
-            <p className="text-sm leading-relaxed">
-              {research.listing.listingSummary}
-            </p>
+            <div className="space-y-2">
+              <p className="text-sm leading-relaxed">
+                {research.listing.listingSummary}
+              </p>
+              {listing.linkUrl && (
+                <a
+                  href={listing.linkUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 hover:underline"
+                >
+                  View on YachtWorld
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
           ) : (
-            <EmptyMessage>
-              {!research?.capabilities?.hasAnthropicKey
-                ? "Anthropic API key not configured"
-                : "No summary available"}
-            </EmptyMessage>
+            <EmptyMessage>No description available</EmptyMessage>
           )}
         </Section>
       )}

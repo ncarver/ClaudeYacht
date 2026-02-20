@@ -69,8 +69,6 @@ export async function GET(
   return NextResponse.json({
     listing: listingResearch,
     model: modelResearch,
-    capabilities: {
-      hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-    },
+    capabilities: {},
   });
 }
