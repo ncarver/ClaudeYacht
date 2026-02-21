@@ -13,9 +13,14 @@ npm run build                  # Production build (use to verify changes)
 npx prisma db push             # Sync schema changes to SQLite
 npx prisma studio              # GUI database browser
 node scripts/scrape_yachtworld.js  # Run scraper standalone (defaults: used, $10k-$100k, 37-42ft)
+npm test                       # Fast tests (Vitest: pure functions, API routes, components)
+npm run test:watch             # Vitest in watch mode
+npm run test:e2e               # E2E tests (Playwright, launches Chromium)
+npm run test:all               # Both tiers sequentially
+npm run test:coverage          # Vitest + V8 coverage report
 ```
 
-No linter or test suite configured. Use `npm run build` to verify TypeScript correctness.
+`npm run build` runs Vitest then Next.js build. Use `npm test` for the fast TDD loop.
 
 ## Data Flow
 
@@ -83,6 +88,9 @@ Research Pipeline:
 - `app/results/results-content.tsx` — Orchestrates filters, search, table; handles optimistic updates
 - `components/research-panel.tsx` — Research UI: SSE status display, human-in-the-loop candidate selection, specs/reviews/forums display
 - `scripts/scrape_yachtworld.js` — Playwright scraper (CommonJS); do not import from Next.js
+- `lib/research-helpers.ts` — Pure functions extracted from `research.ts` for testability
+- `vitest.config.ts` — Test runner config (React plugin, path aliases, environment matching)
+- `test/fixtures.ts` — `createListing()` / `createFilters()` factory functions for test data
 
 ## Important Conventions
 
@@ -96,6 +104,9 @@ Research Pipeline:
 - **Research state**: Uses `globalThis.researchState` (job map) and `globalThis.playwrightMutex` (AsyncMutex) for HMR persistence and serialized browser access
 - **Model-level caching**: Research is cached per boat model (manufacturer + class + year range) in `ModelResearch`, so listings of the same model share data
 - **SSE for research status**: `GET /api/research/[id]/status` streams events instead of polling; consumed by `research-panel.tsx`
+- **Testing**: Two tiers — fast (`npm test`, no browser, ~2s) and E2E (`npm run test:e2e`, real Chromium). Tests co-located as `*.test.ts(x)`. See `.claude/docs/testing-strategy.md`
+- **Build gate**: `npm run build` runs `vitest run && next build` — tests must pass before build succeeds
+- **TDD workflow**: Write tests first for all new features and bug fixes. Run `npm run test:watch` during development. New code should include co-located `*.test.ts(x)` files. See `test/fixtures.ts` for factory functions and `.claude/docs/testing-strategy.md` for patterns
 
 ## Additional Documentation
 
@@ -104,3 +115,4 @@ Check these files for detailed reference when working in related areas:
 - `.claude/docs/project_structure.md` — Full directory layout with file-by-file descriptions
 - `.claude/docs/tech_stack.md` — Framework versions, UI libraries, configuration files
 - `.claude/docs/architectural_patterns.md` — Design patterns used across the codebase (globalThis singletons, optimistic updates, tri-state filters, cross-filtered facets, push sidebar, JSON-in-SQLite, etc.)
+- `.claude/docs/testing-strategy.md` — Test commands, stack, patterns, and how to add new tests

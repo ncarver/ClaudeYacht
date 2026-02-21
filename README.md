@@ -118,6 +118,28 @@ Research is cached per boat model (manufacturer + class + year range), so multip
 - **Browse raw data**: Run `npx prisma studio` to open the database GUI
 - **Schema changes**: Edit `prisma/schema.prisma`, then run `npx prisma db push`
 
+## Testing
+
+```bash
+npm test                # Fast tests — pure functions, API routes, components (~2s, no browser)
+npm run test:watch      # Watch mode for TDD
+npm run test:e2e        # E2E browser tests (launches Chromium)
+npm run test:all        # Both tiers
+npm run test:coverage   # Fast tests + V8 coverage report
+```
+
+Tests are co-located with source files (`*.test.ts` / `*.test.tsx`). The build script runs fast tests before building (`vitest run && next build`).
+
+### Writing new tests
+
+This project follows **test-driven development**. When adding a new feature or fixing a bug:
+
+1. Write a failing test first (`npm run test:watch` for instant feedback)
+2. Implement the minimum code to pass the test
+3. Refactor while keeping tests green
+
+Test files live alongside source files (e.g., `lib/foo.ts` → `lib/foo.test.ts`). Use the factory functions in `test/fixtures.ts` for test data. See `lib/filters.test.ts` for a comprehensive example.
+
 ## How It Works
 
 ### Scraping pipeline
@@ -162,6 +184,8 @@ lib/                    # Business logic (types, filters, ingest, scraper, resea
   research.ts           # Research orchestration (Playwright, DuckDuckGo, SSE)
 scripts/                # Standalone scraper (CommonJS, runs as child process)
 prisma/                 # Database schema (Listing, ListingResearch, ModelResearch, SailboatDataMapping)
+test/                   # Test infrastructure (setup, fixtures, custom render)
+e2e/                    # Playwright E2E browser tests
 data/                   # Gitignored: JSONL files + SQLite database
 ```
 
@@ -174,6 +198,8 @@ data/                   # Gitignored: JSONL files + SQLite database
 - [Tailwind CSS v4](https://tailwindcss.com/) + [Radix UI](https://www.radix-ui.com/)
 - [Lucide Icons](https://lucide.dev/)
 - [Cheerio](https://cheerio.js.org/) (HTML parsing for research scraping)
+- [Vitest](https://vitest.dev/) + [React Testing Library](https://testing-library.com/)
+- [Playwright Test](https://playwright.dev/) (E2E)
 
 ## License
 

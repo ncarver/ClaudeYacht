@@ -26,7 +26,7 @@ export interface IngestResult {
 
 const YEAR_REGEX = /^(\d{4})\s+(.+)$/;
 
-function parseBuildYear(listingName: string | null): {
+export function parseBuildYear(listingName: string | null): {
   buildYear: number | null;
   name: string | null;
 } {
