@@ -104,9 +104,9 @@ Research Pipeline:
 - **Research state**: Uses `globalThis.researchState` (job map) and `globalThis.playwrightMutex` (AsyncMutex) for HMR persistence and serialized browser access
 - **Model-level caching**: Research is cached per boat model (manufacturer + class + year range) in `ModelResearch`, so listings of the same model share data
 - **SSE for research status**: `GET /api/research/[id]/status` streams events instead of polling; consumed by `research-panel.tsx`
-- **Testing**: Two tiers — fast (`npm test`, no browser, ~2s) and E2E (`npm run test:e2e`, real Chromium). Tests co-located as `*.test.ts(x)`. See `.claude/docs/testing-strategy.md`
+- **Testing**: Two tiers — fast (`npm test`, no browser, ~2s) and E2E (`npm run test:e2e`, real Chromium). Tests co-located as `*.test.ts(x)`. See `.claude/docs/testing_strategy.md`
 - **Build gate**: `npm run build` runs `vitest run && next build` — tests must pass before build succeeds
-- **TDD workflow**: Write tests first for all new features and bug fixes. Run `npm run test:watch` during development. New code should include co-located `*.test.ts(x)` files. See `test/fixtures.ts` for factory functions and `.claude/docs/testing-strategy.md` for patterns
+- **TDD workflow**: Write tests first for all new features and bug fixes. Run `npm run test:watch` during development. New code should include co-located `*.test.ts(x)` files. See `test/fixtures.ts` for factory functions and `.claude/docs/testing_strategy.md` for patterns
 
 ## Additional Documentation
 
@@ -115,4 +115,4 @@ Check these files for detailed reference when working in related areas:
 - `.claude/docs/project_structure.md` — Full directory layout with file-by-file descriptions
 - `.claude/docs/tech_stack.md` — Framework versions, UI libraries, configuration files
 - `.claude/docs/architectural_patterns.md` — Design patterns used across the codebase (globalThis singletons, optimistic updates, tri-state filters, cross-filtered facets, push sidebar, JSON-in-SQLite, etc.)
-- `.claude/docs/testing-strategy.md` — Test commands, stack, patterns, and how to add new tests
+- `.claude/docs/testing_strategy.md` — Test commands, stack, patterns, and how to add new tests
